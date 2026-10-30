@@ -1,6 +1,6 @@
 # nvimpi
 
-A small Neovim plugin that rewrites the selected text with an AI model. Select text, type an Instruction, and the model's reply replaces the selection as one undo step. Requests go through [pi-durable](https://github.com/earendil-works/pi) in a bundled Node sidecar.
+A small Neovim plugin that edits text with an AI model. Select text and type an Instruction, and the model's reply replaces the selection (Rewrite); with nothing selected, the reply goes in at the cursor (Insert). Either way it is one undo step. Requests go through [pi-durable](https://github.com/earendil-works/pi) in a bundled Node sidecar.
 
 Status: early development.
 
@@ -19,7 +19,10 @@ With `vim.pack`:
 vim.pack.add({ "https://github.com/Wayaans/nvimpi" })
 require("nvimpi").setup({ model = "anthropic/claude-sonnet-4-5" })
 vim.keymap.set("x", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Rewrite selection" })
+vim.keymap.set("n", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Insert at cursor" })
 ```
+
+The same function serves both mappings: in Visual mode it Rewrites the selection, in Normal mode it Inserts at the cursor.
 
 `model` is `"provider/id"` using pi-ai's provider ids. It is split at the first `/`, so ids like `openrouter/anthropic/claude-sonnet-4-5` work. There is no default model: set one in `setup()` or with `:NvimpiModel`.
 
@@ -84,9 +87,11 @@ Without a pi entry for the provider, credentials come from the provider's enviro
 
 Select text (`v` or `V`), press your mapping, and type an Instruction at the `Rewrite 3,9❯` prompt. `<CR>` sends it. `<Esc>`, `<C-c>` or an empty Instruction closes the prompt without sending.
 
+With nothing selected, press your Normal-mode mapping to Insert: the prompt reads `Insert 12:3❯` (line 12, column 3), and the reply goes in before the character under the cursor. Blockwise Visual (`<C-v>`) is not supported.
+
 - A charwise selection replaces only the selected characters.
 - A linewise selection replaces whole lines and keeps the line structure.
-- An empty reply deletes the selection.
+- An empty reply deletes the selection, and an empty Insert changes nothing.
 - One `u` undoes the change. Success shows no message, and any failure shows one error titled `nvimpi` and leaves the buffer untouched.
 - After a failure, the next prompt opens with the failed Instruction filled in, so you can retry it or edit it.
 
@@ -101,7 +106,7 @@ vim.o.statusline = "%f %m%=%{v:lua.require'nvimpi'.status()} %l:%c"
 
 The highlight uses the `NvimpiWorking` group, linked to `Visual` by default.
 
-The model also sees up to 100 lines of Context above and below the selection, and the buffer's filetype.
+The model also sees up to 100 lines of Context above and below the selection (or the cursor), and the buffer's filetype.
 
 ## Troubleshooting
 
@@ -109,10 +114,10 @@ Run `:checkhealth nvimpi`. It checks Neovim, `node` (22.19 or newer on `PATH`), 
 
 ## Development
 
-The sidecar is TypeScript in `sidecar/src`, bundled with esbuild into `sidecar/dist/sidecar.mjs`, which is committed. Rebuild it after changing the sidecar or its dependencies.
+The sidecar is TypeScript in `sidecar/src`, bundled with esbuild into `sidecar/dist/sidecar.mjs`, which is committed. Its runtime dependencies (pi-durable, pi-ai and chord) are bundled into that file, which is why users need no `npm install`. Rebuild it after changing the sidecar or its dependencies.
 
 ```sh
-npm install          # dev only: pi-durable, pi-ai and esbuild
+npm install          # for development only: the dependencies to bundle, and esbuild
 npm test             # sidecar handler, --list-models and --credential-source tests (node --test, pi-ai faux provider)
 npm run build        # bundle sidecar/src into sidecar/dist/sidecar.mjs
 npm run smoke        # run the bundle from an empty directory with no node_modules
