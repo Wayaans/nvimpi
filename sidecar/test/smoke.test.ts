@@ -71,11 +71,11 @@ function agentDir(name: string, auth: unknown): Record<string, string> {
 
 const SONNET = { provider: "anthropic", id: "claude-sonnet-4-5" };
 
-test("an auth.json API key is sent, and wins over the provider env var", () => {
+test("an auth.json API key is sent, wins over the provider env var, and is redacted from the error", () => {
   const env = agentDir("api-key", { anthropic: { type: "api_key", key: "file-key" } });
   const out = run(request(SONNET), { ...env, ANTHROPIC_API_KEY: "env-key" }) as { code: string; message: string };
   assert.equal(out.code, "provider");
-  assert.match(out.message, /fetch-stub saw file-key/);
+  assert.match(out.message, /fetch-stub saw \*\*\* \(reversed yek-elif\)/);
 });
 
 test("a setup api_key is sent over auth.json and the env var, and redacted from the error", () => {
@@ -83,17 +83,16 @@ test("a setup api_key is sent over auth.json and the env var, and redacted from 
   const line = `${JSON.stringify({ ...JSON.parse(request(SONNET)), api_key: "fake-setup-key" })}\n`;
   const out = run(line, { ...env, ANTHROPIC_API_KEY: "env-key" }) as { code: string; message: string };
   assert.equal(out.code, "provider");
-  assert.match(out.message, /fetch-stub saw \*\*\*/);
-  assert.doesNotMatch(out.message, /fake-setup-key/);
+  assert.match(out.message, /fetch-stub saw \*\*\* \(reversed yek-putes-ekaf\)/);
 });
 
 // The OAuth bundle spike: pi-ai loads OAuth flows through an import esbuild cannot follow,
 // so toAuth only works in the bundle because main registers them with registerBunOAuthFlows().
-test("a valid pi OAuth login works inside the bundle", () => {
+test("a valid pi OAuth login works inside the bundle, its token redacted from the error", () => {
   const login = { type: "oauth", access: "oauth-access", refresh: "r", expires: Date.now() + 3_600_000 };
   const out = run(request(SONNET), agentDir("oauth", { anthropic: login })) as { code: string; message: string };
   assert.equal(out.code, "provider");
-  assert.match(out.message, /fetch-stub saw oauth-access/);
+  assert.match(out.message, /fetch-stub saw \*\*\* \(reversed ssecca-htuao\)/);
 });
 
 test("an expired pi OAuth login asks the user to open pi", () => {

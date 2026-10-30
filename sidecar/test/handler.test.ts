@@ -6,6 +6,7 @@ import { afterEach, beforeEach, test } from "node:test";
 import { createModels, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
 import type { CredentialStore, FauxProviderHandle, MutableModels, OAuthAuth, TranscriptContext } from "@earendil-works/pi-ai";
 import { handleRequest } from "../src/handler.ts";
+import { createSecrets } from "../src/secrets.ts";
 
 const KEY_ENV = "NVIMPI_TEST_FAUX_KEY";
 
@@ -450,3 +451,41 @@ for (const [name, apiKey] of [
     assert.equal(out.message, "invalid request: api_key must be a non-empty string");
   });
 }
+
+// --- Redaction: every credential resolved for the request is *** in every message ---
+
+/** The model rejects whatever key it was given, echoing it in the error. */
+function rejectEchoingKey(): void {
+  faux.setResponses([
+    (_context, options) => fauxAssistantMessage("", { stopReason: "error", errorMessage: `invalid key ${options?.apiKey}` }),
+  ]);
+}
+
+const REJECTED = { type: "error", code: "provider", message: "faux/m1: invalid key ***" };
+
+for (const [name, entry] of [
+  ["an auth.json literal key", { type: "api_key", key: "file-secret" }],
+  ["an auth.json $ENV key", { type: "api_key", key: "$NVIMPI_TEST_REF" }],
+  ["an auth.json !command key", { type: "api_key", key: "!echo cmd-secret" }],
+  ["an auth.json OAuth token", { type: "oauth", access: "tok-secret", refresh: "r", expires: Date.now() + 3_600_000 }],
+] as const) {
+  test(`${name} echoed in a provider error is redacted`, async () => {
+    process.env.NVIMPI_TEST_REF = "env-ref-secret";
+    writeAuth({ faux: entry });
+    rejectEchoingKey();
+    assert.deepEqual(await respond(request()), REJECTED);
+  });
+}
+
+test("a provider env var key echoed in a provider error is redacted", async () => {
+  rejectEchoingKey();
+  assert.deepEqual(await respond(request()), REJECTED);
+});
+
+test("the caller's secrets learn every credential resolved, to redact stderr too", async () => {
+  writeAuth({ faux: { type: "api_key", key: "!echo cmd-secret" } });
+  reply("ok");
+  const secrets = createSecrets();
+  await handleRequest(request(), makeModels, secrets);
+  assert.equal(secrets.redact("Error: cmd-secret rejected"), "Error: *** rejected");
+});

@@ -1,6 +1,9 @@
 import type { CredentialStore, Models } from "@earendil-works/pi-ai";
 import { authJsonPath, authJsonStore, CredentialError, layeredStore, requestKeyStore } from "./credentials.ts";
 import { completeOnce } from "./durable.ts";
+import { addAuth, createSecrets, recordingStore } from "./secrets.ts";
+import type { Secrets } from "./secrets.ts";
+import { isRecord, messageOf } from "./values.ts";
 
 /** One request line from Lua. `before + selection + after` is a verbatim stretch of the buffer. */
 export type Request = {
@@ -19,57 +22,62 @@ type ErrorCode = "not_configured" | "provider" | "invalid_request" | "internal";
 
 export type Response = { type: "result"; text: string } | { type: "error"; code: ErrorCode; message: string };
 
+export function errorResponse(code: ErrorCode, message: string): Response {
+  return { type: "error", code, message };
+}
+
 /** Builds the model collection for one request over its credentials. */
 export type CreateModels = (credentials: CredentialStore) => Models;
 
-/** Turns one request line into exactly one response line (no trailing newline). */
-export async function handleRequest(line: string, createModels: CreateModels): Promise<string> {
-  return JSON.stringify(await respond(line, createModels));
+/**
+ * Turns one request line into exactly one response line (no trailing newline).
+ * Every credential resolved on the way is added to `secrets`, and redacted from the response.
+ */
+export async function handleRequest(line: string, createModels: CreateModels, secrets: Secrets = createSecrets()): Promise<string> {
+  const response = await respond(line, createModels, secrets);
+  // A provider can echo the key it rejected; no credential leaves the sidecar.
+  return JSON.stringify(response.type === "error" ? { ...response, message: secrets.redact(response.message) } : response);
 }
 
-async function respond(line: string, createModels: CreateModels): Promise<Response> {
+async function respond(line: string, createModels: CreateModels, secrets: Secrets): Promise<Response> {
   const request = parseRequest(line);
-  if (typeof request === "string") return error("invalid_request", `invalid request: ${request}`);
-  const response = await answer(request, createModels);
-  // A provider can echo the key it rejected; the setup key never leaves the sidecar.
-  return response.type === "error" && request.api_key !== undefined
-    ? { ...response, message: response.message.replaceAll(request.api_key, "***") }
-    : response;
+  if (typeof request === "string") return errorResponse("invalid_request", `invalid request: ${request}`);
+  secrets.add(request.api_key);
+  return answer(request, createModels, secrets);
 }
 
-async function answer(request: Request, createModels: CreateModels): Promise<Response> {
+async function answer(request: Request, createModels: CreateModels, secrets: Secrets): Promise<Response> {
   const { provider, id } = request.model;
   // Credential layers, first match wins; provider env vars come after all of them (pi-ai).
   const setupKey = request.api_key === undefined ? [] : [requestKeyStore(provider, request.api_key)];
-  const models = createModels(layeredStore([...setupKey, authJsonStore(authJsonPath())]));
+  const store = layeredStore([...setupKey, authJsonStore(authJsonPath())]);
+  const models = createModels(recordingStore(store, secrets));
 
   if (!models.getModel(provider, id)) {
-    return error("not_configured", `unknown model ${provider}/${id}: run :NvimpiModel`);
+    return errorResponse("not_configured", `unknown model ${provider}/${id}: run :NvimpiModel`);
   }
   try {
-    if (!(await models.getAuth(provider))) {
-      return error("not_configured", `no credentials for ${provider}: log in with pi, or set its API key env var`);
+    const auth = await models.getAuth(provider);
+    if (!auth) {
+      return errorResponse("not_configured", `no credentials for ${provider}: log in with pi, or set its API key env var`);
     }
+    addAuth(auth, secrets);
   } catch (cause) {
     const problem = credentialProblem(cause);
-    return error("provider", problem ? problem.message : `${provider} credentials: ${messageOf(cause)}`);
+    return errorResponse("provider", problem ? problem.message : `${provider} credentials: ${messageOf(cause)}`);
   }
 
   try {
     const completion = await completeOnce(models, { provider, modelId: id }, systemPrompt(request), userMessage(request));
     if (!completion.ok) {
       return completion.reason === "model_error"
-        ? error("provider", `${provider}/${id}: ${completion.detail ?? "model error"}`)
-        : error("internal", `pi-durable: ${completion.reason}${completion.detail ? `: ${completion.detail}` : ""}`);
+        ? errorResponse("provider", `${provider}/${id}: ${completion.detail ?? "model error"}`)
+        : errorResponse("internal", `pi-durable: ${completion.reason}${completion.detail ? `: ${completion.detail}` : ""}`);
     }
     return { type: "result", text: cleanReply(completion.text, request) };
   } catch (cause) {
-    return error("internal", `internal error: ${messageOf(cause)}`);
+    return errorResponse("internal", `internal error: ${messageOf(cause)}`);
   }
-}
-
-function error(code: ErrorCode, message: string): Response {
-  return { type: "error", code, message };
 }
 
 /** pi-ai wraps credential store failures; find ours in the cause chain. */
@@ -78,10 +86,6 @@ function credentialProblem(cause: unknown): CredentialError | undefined {
     if (current instanceof CredentialError) return current;
   }
   return undefined;
-}
-
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** Returns the request, or a reason it is invalid. */
@@ -95,27 +99,25 @@ function parseRequest(line: string): Request | string {
   if (!isRecord(value)) return "expected a JSON object";
   const { mode, instruction, before, selection, after, filetype, model, api_key } = value;
   if (mode !== "rewrite" && mode !== "insert") return 'mode must be "rewrite" or "insert"';
-  for (const [name, field] of Object.entries({ instruction, before, selection, after, filetype })) {
-    if (typeof field !== "string") return `${name} must be a string`;
-  }
+  if (typeof instruction !== "string") return "instruction must be a string";
+  if (typeof before !== "string") return "before must be a string";
+  if (typeof selection !== "string") return "selection must be a string";
+  if (typeof after !== "string") return "after must be a string";
+  if (typeof filetype !== "string") return "filetype must be a string";
   if (!isRecord(model) || !isNonEmptyString(model.provider) || !isNonEmptyString(model.id)) {
     return "model must be { provider, id } with non-empty strings";
   }
   if (api_key !== undefined && !isNonEmptyString(api_key)) return "api_key must be a non-empty string";
   return {
     mode,
-    instruction: instruction as string,
-    before: before as string,
-    selection: selection as string,
-    after: after as string,
-    filetype: filetype as string,
+    instruction,
+    before,
+    selection,
+    after,
+    filetype,
     model: { provider: model.provider, id: model.id },
     ...(api_key === undefined ? {} : { api_key }),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -136,8 +138,8 @@ function systemPrompt(request: Request): string {
   const shared = [
     "Reply with only that text, exactly as it should appear in the file.",
     "Do not add explanations, comments about the change, or code fences.",
-    "Do not repeat any of the surrounding text.",
-    "Match the indentation and style of the surrounding text.",
+    "The rest of the file is Context: do not repeat any of it.",
+    "Match the indentation and style of the Context.",
   ];
   switch (request.mode) {
     case "rewrite":

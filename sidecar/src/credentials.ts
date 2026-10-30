@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import { isRecord, messageOf } from "./values.ts";
 
 /** A credential problem the user has to fix. The message is shown to them as is. */
 export class CredentialError extends Error {}
@@ -158,10 +159,8 @@ function parseEntry(entry: unknown): Credential | undefined {
   if (entry.type === "api_key") {
     const { key, env } = entry;
     if (key !== undefined && typeof key !== "string") return undefined;
-    if (env !== undefined && !(isRecord(env) && Object.values(env).every((value) => typeof value === "string"))) {
-      return undefined;
-    }
-    return { ...entry, type: "api_key", key, env: env as Record<string, string> | undefined };
+    if (env !== undefined && !isStringRecord(env)) return undefined;
+    return { ...entry, type: "api_key", key, env };
   }
   if (entry.type === "oauth") {
     const { access, refresh, expires } = entry;
@@ -225,14 +224,10 @@ function runKeyCommand(command: string, what: string): Promise<string> {
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((field) => typeof field === "string");
 }
 
 function isErrnoException(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value;
-}
-
-function messageOf(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }

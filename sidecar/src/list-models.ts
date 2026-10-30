@@ -3,7 +3,8 @@
 // Both are side-effect free: auth.json key commands never run and OAuth tokens are never refreshed.
 import type { CredentialStore } from "@earendil-works/pi-ai";
 import { authJsonPath, authJsonStore, CredentialError } from "./credentials.ts";
-import type { CreateModels, Response } from "./handler.ts";
+import { errorResponse } from "./handler.ts";
+import type { CreateModels } from "./handler.ts";
 
 /** A store with no entries, so pi-ai checks only the provider's env vars and ambient sources. */
 const NO_ENTRIES: CredentialStore = {
@@ -25,8 +26,7 @@ async function storedProviders(): Promise<{ ok: true; ids: string[] } | { ok: fa
     return { ok: true, ids: (await authJsonStore(authJsonPath()).list()).map((info) => info.providerId) };
   } catch (cause) {
     if (!(cause instanceof CredentialError)) throw cause;
-    const response: Response = { type: "error", code: "provider", message: cause.message };
-    return { ok: false, line: JSON.stringify(response) };
+    return { ok: false, line: JSON.stringify(errorResponse("provider", cause.message)) };
   }
 }
 
