@@ -135,6 +135,28 @@ return {
     end,
   },
   {
+    "with an asynchronous input UI, an Instruction sent while another request runs is refused with a WARN",
+    function()
+      h.reset({ lines = LINES, response = { type = "result", text = "B" }, sleep = 5 })
+      local pending = {}
+      vim.ui.input = function(_, on_confirm)
+        table.insert(pending, on_confirm) -- answered later, as snacks or dressing would
+      end
+      h.run_action("V")
+      h.run_action("jV")
+      eq(2, #pending, "both prompts are open")
+      pending[1]("x")
+      h.wait_running()
+      pending[2]("y")
+      eq({ "nvimpi: a request is already running (<C-c> cancels it)" }, vim.tbl_map(function(note)
+        return note.msg
+      end, h.state.notes))
+      h.press_ctrl_c()
+      h.wait_idle()
+      eq(LINES, h.lines())
+    end,
+  },
+  {
     "after a cancel the next request runs normally",
     function()
       h.reset({ lines = LINES, instruction = "x", response = { type = "result", text = "B" }, sleep = 5 })

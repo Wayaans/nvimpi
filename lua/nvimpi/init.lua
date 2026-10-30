@@ -52,11 +52,20 @@ local function finish(tracked, instruction, outcome)
   end
 end
 
+--- Refuses with a WARN while a request runs. Checked again on send: an asynchronous
+--- vim.ui.input (snacks, dressing) can leave a prompt open while another request starts.
+---@return boolean
+local function refused_while_running()
+  if runner.running() then
+    notify("nvimpi: a request is already running (<C-c> cancels it)", vim.log.levels.WARN)
+  end
+  return runner.running()
+end
+
 --- The action for user mappings: with a Visual selection, prompt for an Instruction and Rewrite it;
 --- with nothing selected, Insert at the cursor.
 function M.prompt()
-  if runner.running() then
-    notify("nvimpi: a request is already running (<C-c> cancels it)", vim.log.levels.WARN)
+  if refused_while_running() then
     return
   end
   local mode = vim.fn.mode()
@@ -81,7 +90,7 @@ function M.prompt()
   end
 
   vim.ui.input({ prompt = label, default = M.failed_instruction }, function(instruction)
-    if instruction == nil or instruction == "" then
+    if instruction == nil or instruction == "" or refused_while_running() then
       return
     end
     M.failed_instruction = nil
