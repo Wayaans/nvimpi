@@ -22,6 +22,7 @@ local SIGTERM = 15
 ---| { type: "error", message: string } a sidecar error line, or a failure before spawning
 ---| { type: "crash", message: string }
 ---| { type: "timeout", message: string }
+---| { type: "cancel" }
 
 ---@param version string
 ---@return boolean
@@ -83,25 +84,47 @@ local function outcome_of(obj, timeout_ms)
   return { type = "crash", message = ("nvimpi: sidecar crashed (%s)%s"):format(how, stderr_tail(obj.stderr)) }
 end
 
---- Runs `request` and calls `on_done` on the main loop with the outcome.
+---@type { process: vim.SystemObj, cancelled: boolean }?
+local current
+
+function M.running()
+  return current ~= nil
+end
+
+--- Kills the running sidecar. Its outcome becomes a cancel, whatever it printed or exited with.
+--- A timeout kill is vim.system's own and never sets `cancelled`.
+function M.cancel()
+  if current and not current.cancelled then
+    current.cancelled = true
+    current.process:kill("sigterm")
+  end
+end
+
+--- Runs `request` and calls `on_done` on the main loop with the outcome. One request at a time:
+--- callers check `running()` first.
 ---@param request table
 ---@param opts { timeout_ms: number }
 ---@param on_done fun(outcome: nvimpi.Outcome)
 function M.run(request, opts, on_done)
+  assert(not current, "nvimpi: a request is already running")
   local problem = node_problem()
   if problem then
     on_done({ type = "error", message = problem })
     return
   end
   local system_opts = { stdin = vim.json.encode(request) .. "\n", text = true, timeout = opts.timeout_ms }
-  local ok, err = pcall(vim.system, M.command, system_opts, function(obj)
+  local ok, process = pcall(vim.system, M.command, system_opts, function(obj)
     vim.schedule(function()
-      on_done(outcome_of(obj, opts.timeout_ms))
+      local cancelled = current and current.cancelled
+      current = nil
+      on_done(cancelled and { type = "cancel" } or outcome_of(obj, opts.timeout_ms))
     end)
   end)
   if not ok then
-    on_done({ type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(err) })
+    on_done({ type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(process) })
+    return
   end
+  current = { process = process, cancelled = false }
 end
 
 return M

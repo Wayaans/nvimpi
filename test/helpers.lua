@@ -22,7 +22,7 @@ end
 
 --- Fresh buffer with `lines`, a set model, a fake `node` reporting v22.19.0, and a fake sidecar.
 --- The sidecar prints `response` (a table encoded as JSON, a raw string, or nothing when false),
---- after writing `stderr` and sleeping `sleep` seconds, then exits with `exit`.
+--- after writing `stderr` and sleeping `sleep` seconds (to observe a running request), then exits with `exit`.
 ---@class helpers.ResetOpts
 ---@field lines string[]
 ---@field instruction? string
@@ -35,6 +35,7 @@ end
 ---@field exit? integer
 ---@param opts helpers.ResetOpts
 function H.reset(opts)
+  H.cancel_running()
   vim.cmd("enew!")
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].bufhidden = "wipe"
@@ -108,6 +109,38 @@ end
 --- How many times the fake `node` ran.
 function H.node_runs()
   return vim.fn.filereadable(H.node_log) == 1 and #vim.fn.readfile(H.node_log) or 0
+end
+
+function H.running()
+  return require("nvimpi").status() ~= ""
+end
+
+function H.wait_running()
+  assert(vim.wait(5000, H.running, 10), "request did not start")
+end
+
+function H.wait_idle()
+  assert(vim.wait(5000, function()
+    return not H.running()
+  end, 10), "request did not finish")
+end
+
+--- Press <C-c> in Normal mode like a user, so mappings apply.
+function H.press_ctrl_c()
+  vim.api.nvim_feedkeys(vim.keycode("<C-c>"), "mx", false)
+end
+
+--- A request left running by a failed test must not leak into the next one.
+function H.cancel_running()
+  if H.running() then
+    H.press_ctrl_c()
+    H.wait_idle()
+  end
+end
+
+--- Extmarks from any namespace in the current buffer: the moving highlight is one.
+function H.extmarks()
+  return vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {})
 end
 
 --- Give a sidecar that should not have been started time to show up anyway.

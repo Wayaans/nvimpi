@@ -1,6 +1,7 @@
 local request = require("nvimpi.request")
 local runner = require("nvimpi.runner")
 local apply = require("nvimpi.apply")
+local feedback = require("nvimpi.feedback")
 
 local M = {}
 
@@ -72,6 +73,10 @@ end
 --- The action for user mappings: with a Visual selection, prompt for an Instruction and Rewrite it;
 --- with nothing selected, Insert at the cursor.
 function M.prompt()
+  if runner.running() then
+    vim.notify("nvimpi: a request is already running (<C-c> cancels it)", vim.log.levels.WARN, { title = "nvimpi" })
+    return
+  end
   local mode = vim.fn.mode()
   if mode == "\22" then
     return -- blockwise Visual is not supported
@@ -108,18 +113,26 @@ function M.prompt()
       filetype = vim.bo[buf].filetype,
       model = model,
     }
+    feedback.start(buf, target.start_row, target.end_row, runner.cancel)
     runner.run(line, { timeout_ms = M.config.timeout_ms }, function(outcome)
+      feedback.stop()
       local kind = outcome.type
       if kind == "result" then
         apply.apply(buf, target, outcome.text)
       elseif kind == "error" or kind == "crash" or kind == "timeout" then
         M.failed_instruction = instruction
         fail(outcome.message)
-      else
+      elseif kind ~= "cancel" then -- a cancel is silent and does not refill
         error("nvimpi: unhandled outcome " .. tostring(kind))
       end
     end)
   end)
+end
+
+--- For the user's statusline: a spinner and the elapsed time while a request runs, "" when idle.
+---@return string
+function M.status()
+  return feedback.status()
 end
 
 return M

@@ -45,6 +45,17 @@ Select text (`v` or `V`), press your mapping, and type an Instruction at the `Re
 - One `u` undoes the change. Success shows no message, and any failure shows one error titled `nvimpi` and leaves the buffer untouched.
 - After a failure, the next prompt opens with the failed Instruction filled in, so you can retry it or edit it.
 
+While a request runs, a highlight moves down the target lines and the buffer stays editable. Nothing opens or takes focus. Only one request runs at a time.
+
+- `<C-c>` in Normal mode cancels the request, silently and without touching the buffer. nvimpi maps `<C-c>` only while a request runs and restores your own mapping afterwards.
+- `require("nvimpi").status()` returns a spinner and the elapsed time while a request runs, and an empty string otherwise. nvimpi never changes `'statusline'`; add it yourself:
+
+```lua
+vim.o.statusline = "%f %m%=%{v:lua.require'nvimpi'.status()} %l:%c"
+```
+
+The highlight uses the `NvimpiWorking` group, linked to `Visual` by default.
+
 The model also sees up to 100 lines of Context above and below the selection, and the buffer's filetype.
 
 Run `:checkhealth nvimpi` to verify the setup.
