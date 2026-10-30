@@ -54,11 +54,20 @@ local function visual_target(buf, mode)
   return { linewise = false, start_row = sr, start_col = math.min(a[3] - 1, #first_line), end_row = er, end_col = end_col }
 end
 
---- The action for user mappings: with a Visual selection, prompt for an Instruction and Rewrite it.
+--- An empty charwise range at the cursor: Insert puts text before the character under it.
+---@param win integer
+---@return nvimpi.Target
+local function cursor_target(win)
+  local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+  return { linewise = false, start_row = row - 1, start_col = col, end_row = row - 1, end_col = col }
+end
+
+--- The action for user mappings: with a Visual selection, prompt for an Instruction and Rewrite it;
+--- with nothing selected, Insert at the cursor.
 function M.prompt()
   local mode = vim.fn.mode()
-  if mode ~= "v" and mode ~= "V" then
-    return
+  if mode == "\22" then
+    return -- blockwise Visual is not supported
   end
   local model, model_error = current_model()
   if not model then
@@ -67,17 +76,23 @@ function M.prompt()
   end
 
   local buf = vim.api.nvim_get_current_buf()
-  local target = visual_target(buf, mode)
-  vim.cmd("normal! \27") -- leave Visual mode before prompting
+  local action, target, label
+  if mode == "v" or mode == "V" then
+    action, target = "rewrite", visual_target(buf, mode)
+    vim.cmd("normal! \27") -- leave Visual mode before prompting
+    label = ("Rewrite %d,%d❯ "):format(target.start_row + 1, target.end_row + 1)
+  else
+    action, target = "insert", cursor_target(0)
+    label = ("Insert %d:%d❯ "):format(target.start_row + 1, target.start_col + 1)
+  end
 
-  local label = ("Rewrite %d,%d❯ "):format(target.start_row + 1, target.end_row + 1)
   vim.ui.input({ prompt = label }, function(instruction)
     if instruction == nil or instruction == "" then
       return
     end
     local text = request.rewrite_text(buf, target)
     local line = {
-      mode = "rewrite",
+      mode = action,
       instruction = instruction,
       before = text.before,
       selection = text.selection,

@@ -260,7 +260,7 @@ ${Xtt}${n}`}function nnt(t){let e=[];for(let n of t)if(n.role==="user"){let r=S_
 `)}}function Mnt(t){let e=t.mode==="rewrite"?`${t.before}<selection>${t.selection}</selection>${t.after}`:`${t.before}<cursor/>${t.after}`;return`Instruction: ${t.instruction}
 
 File:
-${e}`}var Pnt=/^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/;function Lnt(t,e){let n=Pnt.exec(t)?.[1]??t;return e.mode==="rewrite"&&n.endsWith(`
+${e}`}var Pnt=/^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/;function Lnt(t,e){let n=Pnt.exec(t)?.[1]??t;return n.endsWith(`
 `)&&!e.selection.endsWith(`
 `)&&(n=n.slice(0,-1)),n}async function Ont(){let t=[];for await(let e of process.stdin)t.push(e);return Buffer.concat(t).toString("utf8")}async function Wnt(){let e=(await Ont()).split(`
 `,1)[0]??"",n=await Q_e(e,Oce());process.stdout.write(`${n}
