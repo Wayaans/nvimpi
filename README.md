@@ -27,6 +27,40 @@ vim.keymap.set("x", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Rew
 
 ### Credentials
 
+nvimpi looks for a key in this order, and the first source with an entry for the provider wins: `api_keys` in `setup()`, then pi's `auth.json`, then the provider's environment variable.
+
+#### `api_keys` in setup()
+
+Without pi, or to pick a key explicitly, set `api_keys`: a table from provider id to a key, or to a function that returns one. The recommended setup on macOS keeps the key in the Keychain and reads it when a request starts:
+
+```lua
+-- Store it once: security add-generic-password -a "$USER" -s nvimpi-anthropic -w
+require("nvimpi").setup({
+  model = "anthropic/claude-sonnet-4-5",
+  api_keys = {
+    anthropic = function()
+      local result = vim.system({ "security", "find-generic-password", "-s", "nvimpi-anthropic", "-w" }, { text = true }):wait()
+      assert(result.code == 0, "no nvimpi-anthropic item in the Keychain")
+      return result.stdout
+    end,
+  },
+})
+```
+
+A literal key works too:
+
+```lua
+require("nvimpi").setup({ model = "anthropic/claude-sonnet-4-5", api_keys = { anthropic = "sk-ant-..." } })
+```
+
+Do not commit a literal key: dotfiles often end up in a public repository. Prefer the Keychain function, or read the key from a file outside your dotfiles.
+
+- Only the current model's provider is looked up, and its function runs once per request. The result is trimmed.
+- If the function throws, or the key is empty or not a string, nvimpi reports `nvimpi: api_keys.<provider> failed: <reason>` and sends nothing.
+- The key reaches the sidecar on stdin only, never in its arguments or environment. A key the provider rejects is reported (with the key shown as `***`), and nvimpi does not fall back to another source.
+
+#### pi and environment variables
+
 If you use [pi](https://github.com/earendil-works/pi), nvimpi reuses its logins with no extra setup. It reads pi's `auth.json` (`$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json`):
 
 - API keys work as in pi: a literal key, `$ENV` or `${ENV}`, or `!command` (run in `sh` with a 5 s timeout, once per request).

@@ -78,6 +78,15 @@ test("an auth.json API key is sent, and wins over the provider env var", () => {
   assert.match(out.message, /fetch-stub saw file-key/);
 });
 
+test("a setup api_key is sent over auth.json and the env var, and redacted from the error", () => {
+  const env = agentDir("setup-key", { anthropic: { type: "api_key", key: "file-key" } });
+  const line = `${JSON.stringify({ ...JSON.parse(request(SONNET)), api_key: "fake-setup-key" })}\n`;
+  const out = run(line, { ...env, ANTHROPIC_API_KEY: "env-key" }) as { code: string; message: string };
+  assert.equal(out.code, "provider");
+  assert.match(out.message, /fetch-stub saw \*\*\*/);
+  assert.doesNotMatch(out.message, /fake-setup-key/);
+});
+
 // The OAuth bundle spike: pi-ai loads OAuth flows through an import esbuild cannot follow,
 // so toAuth only works in the bundle because main registers them with registerBunOAuthFlows().
 test("a valid pi OAuth login works inside the bundle", () => {

@@ -409,3 +409,44 @@ test("auth.json defaults to ~/.pi/agent, and PI_CODING_AGENT_DIR expands ~", asy
     process.env.HOME = home;
   }
 });
+
+// --- Setup key: the request's api_key, before auth.json and env vars ---
+
+test("a setup api_key wins over auth.json and the provider env var", async () => {
+  writeAuth({ faux: { type: "api_key", key: "from-file" } });
+  reply("ok");
+  assert.deepEqual(await respond(request({ api_key: "fake-setup-key" })), { type: "result", text: "ok" });
+  assert.deepEqual(seenKeys, ["fake-setup-key"]);
+});
+
+test("a setup api_key owns the provider: a broken auth.json entry is never read", async () => {
+  writeAuth({ faux: { type: "api_key", key: "!exit 1" } });
+  reply("ok");
+  assert.deepEqual(await respond(request({ api_key: "fake-setup-key" })), { type: "result", text: "ok" });
+  assert.deepEqual(seenKeys, ["fake-setup-key"]);
+});
+
+test("a rejected setup api_key is a provider error with the key redacted, not a fall through", async () => {
+  writeAuth({ faux: { type: "api_key", key: "from-file" } });
+  faux.setResponses([
+    (_context, options) => {
+      seenKeys.push(options?.apiKey);
+      return fauxAssistantMessage("", { stopReason: "error", errorMessage: `invalid key ${options?.apiKey} (${options?.apiKey})` });
+    },
+  ]);
+  const out = await respond(request({ api_key: "fake-setup-key" }));
+  assert.equal(out.code, "provider");
+  assert.equal(out.message, "faux/m1: invalid key *** (***)");
+  assert.deepEqual(seenKeys, ["fake-setup-key"]);
+});
+
+for (const [name, apiKey] of [
+  ["non-string api_key", 42],
+  ["empty api_key", ""],
+] as const) {
+  test(`invalid_request: ${name}`, async () => {
+    const out = await respond(request({ api_key: apiKey }));
+    assert.equal(out.code, "invalid_request");
+    assert.equal(out.message, "invalid request: api_key must be a non-empty string");
+  });
+}

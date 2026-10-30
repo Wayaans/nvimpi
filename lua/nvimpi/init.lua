@@ -8,6 +8,7 @@ local M = {}
 ---@class nvimpi.Config
 ---@field model? string "provider/id", split at the first "/"
 ---@field timeout_ms? number request time limit; the sidecar is killed after it
+---@field api_keys? table<string, string|fun(): string> provider -> key, or a function returning it
 local defaults = { timeout_ms = 120000 }
 
 ---@type nvimpi.Config
@@ -16,6 +17,7 @@ M.config = vim.deepcopy(defaults)
 ---@param opts? nvimpi.Config
 function M.setup(opts)
   vim.validate("timeout_ms", (opts or {}).timeout_ms, "number", true)
+  vim.validate("api_keys", (opts or {}).api_keys, "table", true)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 end
 
@@ -40,6 +42,34 @@ local function current_model()
     return nil, ("nvimpi: unknown model %s: run :NvimpiModel"):format(model)
   end
   return { provider = provider, id = id }
+end
+
+--- The setup key for `provider`, if any: a function is called now, and the result trimmed.
+--- The error never contains the key.
+---@param provider string
+---@return string? key nil when there is no entry
+---@return string? error
+local function setup_key(provider)
+  local entry = (M.config.api_keys or {})[provider]
+  if entry == nil then
+    return nil
+  end
+  local ok, key = true, entry
+  if vim.is_callable(entry) then
+    ok, key = pcall(entry)
+  end
+  local problem
+  if not ok then
+    problem = tostring(key)
+  elseif type(key) ~= "string" then
+    problem = "expected a string, got " .. type(key)
+  elseif vim.trim(key) == "" then
+    problem = "the key is empty"
+  end
+  if problem then
+    return nil, ("nvimpi: api_keys.%s failed: %s"):format(provider, problem)
+  end
+  return vim.trim(key)
 end
 
 --- The current Visual selection. A charwise end past the last character stops at the line end.
@@ -103,6 +133,12 @@ function M.prompt()
       return
     end
     M.failed_instruction = nil
+    local api_key, key_error = setup_key(model.provider)
+    if key_error then
+      M.failed_instruction = instruction
+      fail(key_error)
+      return
+    end
     local text = request.rewrite_text(buf, target)
     local line = {
       mode = action,
@@ -112,6 +148,7 @@ function M.prompt()
       after = text.after,
       filetype = vim.bo[buf].filetype,
       model = model,
+      api_key = api_key, -- only on stdin: never in argv or the environment
     }
     feedback.start(buf, target.start_row, target.end_row, runner.cancel)
     runner.run(line, { timeout_ms = M.config.timeout_ms }, function(outcome)

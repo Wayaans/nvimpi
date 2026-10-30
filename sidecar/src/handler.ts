@@ -1,5 +1,5 @@
 import type { CredentialStore, Models } from "@earendil-works/pi-ai";
-import { authJsonPath, authJsonStore, CredentialError, layeredStore } from "./credentials.ts";
+import { authJsonPath, authJsonStore, CredentialError, layeredStore, requestKeyStore } from "./credentials.ts";
 import { completeOnce } from "./durable.ts";
 
 /** One request line from Lua. `before + selection + after` is a verbatim stretch of the buffer. */
@@ -11,6 +11,8 @@ export type Request = {
   after: string;
   filetype: string;
   model: { provider: string; id: string };
+  /** The key from setup() for `model.provider`. Never logged, and redacted from every error. */
+  api_key?: string;
 };
 
 type ErrorCode = "not_configured" | "provider" | "invalid_request" | "internal";
@@ -26,12 +28,20 @@ export async function handleRequest(line: string, createModels: CreateModels): P
 }
 
 async function respond(line: string, createModels: CreateModels): Promise<Response> {
-  const parsed = parseRequest(line);
-  if (typeof parsed === "string") return error("invalid_request", `invalid request: ${parsed}`);
-  const request = parsed;
+  const request = parseRequest(line);
+  if (typeof request === "string") return error("invalid_request", `invalid request: ${request}`);
+  const response = await answer(request, createModels);
+  // A provider can echo the key it rejected; the setup key never leaves the sidecar.
+  return response.type === "error" && request.api_key !== undefined
+    ? { ...response, message: response.message.replaceAll(request.api_key, "***") }
+    : response;
+}
+
+async function answer(request: Request, createModels: CreateModels): Promise<Response> {
   const { provider, id } = request.model;
   // Credential layers, first match wins; provider env vars come after all of them (pi-ai).
-  const models = createModels(layeredStore([authJsonStore(authJsonPath())]));
+  const setupKey = request.api_key === undefined ? [] : [requestKeyStore(provider, request.api_key)];
+  const models = createModels(layeredStore([...setupKey, authJsonStore(authJsonPath())]));
 
   if (!models.getModel(provider, id)) {
     return error("not_configured", `unknown model ${provider}/${id}: run :NvimpiModel`);
@@ -83,7 +93,7 @@ function parseRequest(line: string): Request | string {
     return "not JSON";
   }
   if (!isRecord(value)) return "expected a JSON object";
-  const { mode, instruction, before, selection, after, filetype, model } = value;
+  const { mode, instruction, before, selection, after, filetype, model, api_key } = value;
   if (mode !== "rewrite" && mode !== "insert") return 'mode must be "rewrite" or "insert"';
   for (const [name, field] of Object.entries({ instruction, before, selection, after, filetype })) {
     if (typeof field !== "string") return `${name} must be a string`;
@@ -91,6 +101,7 @@ function parseRequest(line: string): Request | string {
   if (!isRecord(model) || !isNonEmptyString(model.provider) || !isNonEmptyString(model.id)) {
     return "model must be { provider, id } with non-empty strings";
   }
+  if (api_key !== undefined && !isNonEmptyString(api_key)) return "api_key must be a non-empty string";
   return {
     mode,
     instruction: instruction as string,
@@ -99,6 +110,7 @@ function parseRequest(line: string): Request | string {
     after: after as string,
     filetype: filetype as string,
     model: { provider: model.provider, id: model.id },
+    ...(api_key === undefined ? {} : { api_key }),
   };
 }
 
