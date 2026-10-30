@@ -7,7 +7,7 @@ local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h")
 --- Internal, not a setup() option: the sidecar command. Tests swap in a fake script.
 M.command = { "node", root .. "/sidecar/dist/sidecar.mjs" }
 
----@alias nvimpi.Outcome { type: "result", text: string } | { type: "error", message: string }
+---@alias nvimpi.Outcome { type: "result", text: string } | { type: "error", message: string } | { type: "cancel" }
 
 ---@param obj vim.SystemCompleted
 ---@return nvimpi.Outcome
@@ -24,18 +24,39 @@ local function outcome_of(obj)
   return { type = "error", message = ("nvimpi: sidecar crashed (%s)"):format(how) }
 end
 
---- Runs `request` and calls `on_done` on the main loop with the outcome.
+---@type { process: vim.SystemObj, cancelled: boolean }?
+local current
+
+function M.running()
+  return current ~= nil
+end
+
+--- Kills the running sidecar. Its outcome becomes a cancel, whatever it printed or exited with.
+function M.cancel()
+  if current and not current.cancelled then
+    current.cancelled = true
+    current.process:kill("sigterm")
+  end
+end
+
+--- Runs `request` and calls `on_done` on the main loop with the outcome. One request at a time:
+--- callers check `running()` first.
 ---@param request table
 ---@param on_done fun(outcome: nvimpi.Outcome)
 function M.run(request, on_done)
-  local ok, err = pcall(vim.system, M.command, { stdin = vim.json.encode(request) .. "\n", text = true }, function(obj)
+  assert(not current, "nvimpi: a request is already running")
+  local ok, process = pcall(vim.system, M.command, { stdin = vim.json.encode(request) .. "\n", text = true }, function(obj)
     vim.schedule(function()
-      on_done(outcome_of(obj))
+      local cancelled = current and current.cancelled
+      current = nil
+      on_done(cancelled and { type = "cancel" } or outcome_of(obj))
     end)
   end)
   if not ok then
-    on_done({ type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(err) })
+    on_done({ type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(process) })
+    return
   end
+  current = { process = process, cancelled = false }
 end
 
 return M

@@ -1,6 +1,7 @@
 local request = require("nvimpi.request")
 local runner = require("nvimpi.runner")
 local apply = require("nvimpi.apply")
+local feedback = require("nvimpi.feedback")
 
 local M = {}
 
@@ -56,6 +57,10 @@ end
 
 --- The action for user mappings: with a Visual selection, prompt for an Instruction and Rewrite it.
 function M.prompt()
+  if runner.running() then
+    vim.notify("nvimpi: a request is already running (<C-c> cancels it)", vim.log.levels.WARN, { title = "nvimpi" })
+    return
+  end
   local mode = vim.fn.mode()
   if mode ~= "v" and mode ~= "V" then
     return
@@ -85,14 +90,22 @@ function M.prompt()
       filetype = vim.bo[buf].filetype,
       model = model,
     }
+    feedback.start(buf, target.start_row, target.end_row, runner.cancel)
     runner.run(line, function(outcome)
+      feedback.stop()
       if outcome.type == "result" then
         apply.apply(buf, target, outcome.text)
-      else
+      elseif outcome.type == "error" then
         fail(outcome.message)
-      end
+      end -- a cancel is silent
     end)
   end)
+end
+
+--- For the user's statusline: a spinner and the elapsed time while a request runs, "" when idle.
+---@return string
+function M.status()
+  return feedback.status()
 end
 
 return M

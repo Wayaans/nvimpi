@@ -19,8 +19,10 @@ function H.eq(expected, actual, what)
 end
 
 --- Fresh buffer with `lines`, a set model, and a fake sidecar answering `response` (a table encoded as JSON).
----@param opts { lines: string[], instruction?: string?, response?: table, model?: string|false, filetype?: string }
+--- `sleep` (seconds) delays the response, to observe a running request.
+---@param opts { lines: string[], instruction?: string?, response?: table, model?: string|false, filetype?: string, sleep?: number }
 function H.reset(opts)
+  H.cancel_running()
   vim.cmd("enew!")
   local buf = vim.api.nvim_get_current_buf()
   vim.bo[buf].bufhidden = "wipe"
@@ -33,6 +35,7 @@ function H.reset(opts)
   require("nvimpi.runner").command = { "sh", root .. "/test/fake_sidecar.sh" }
   vim.env.NVIMPI_FAKE_REQUEST = H.request_file
   vim.env.NVIMPI_FAKE_RESPONSE = vim.json.encode(opts.response or { type = "result", text = "" })
+  vim.env.NVIMPI_FAKE_SLEEP = opts.sleep and tostring(opts.sleep) or nil
   vim.fn.delete(H.request_file)
 
   H.state = { prompts = {}, notes = {} }
@@ -76,6 +79,38 @@ function H.sent_request()
     return nil
   end
   return vim.json.decode(table.concat(vim.fn.readfile(H.request_file), "\n"))
+end
+
+function H.running()
+  return require("nvimpi").status() ~= ""
+end
+
+function H.wait_running()
+  assert(vim.wait(5000, H.running, 10), "request did not start")
+end
+
+function H.wait_idle()
+  assert(vim.wait(5000, function()
+    return not H.running()
+  end, 10), "request did not finish")
+end
+
+--- Press <C-c> in Normal mode like a user, so mappings apply.
+function H.press_ctrl_c()
+  vim.api.nvim_feedkeys(vim.keycode("<C-c>"), "mx", false)
+end
+
+--- A request left running by a failed test must not leak into the next one.
+function H.cancel_running()
+  if H.running() then
+    H.press_ctrl_c()
+    H.wait_idle()
+  end
+end
+
+--- Extmarks from any namespace in the current buffer: the moving highlight is one.
+function H.extmarks()
+  return vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {})
 end
 
 --- Give a sidecar that should not have been started time to show up anyway.
