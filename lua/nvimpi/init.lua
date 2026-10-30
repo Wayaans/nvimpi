@@ -6,19 +6,26 @@ local M = {}
 
 ---@class nvimpi.Config
 ---@field model? string "provider/id", split at the first "/"
-local defaults = {}
+---@field timeout_ms? number request time limit; the sidecar is killed after it
+local defaults = { timeout_ms = 120000 }
 
 ---@type nvimpi.Config
 M.config = vim.deepcopy(defaults)
 
 ---@param opts? nvimpi.Config
 function M.setup(opts)
+  vim.validate("timeout_ms", (opts or {}).timeout_ms, "number", true)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
 end
 
 local function fail(message)
   vim.notify(message, vim.log.levels.ERROR, { title = "nvimpi" })
 end
+
+--- Internal: the Instruction of the last failed request, prefilled into the next prompt.
+--- One value, not history. A field so tests can clear it.
+---@type string?
+M.failed_instruction = nil
 
 ---@return { provider: string, id: string }? model
 ---@return string? error
@@ -71,10 +78,11 @@ function M.prompt()
   vim.cmd("normal! \27") -- leave Visual mode before prompting
 
   local label = ("Rewrite %d,%d❯ "):format(target.start_row + 1, target.end_row + 1)
-  vim.ui.input({ prompt = label }, function(instruction)
+  vim.ui.input({ prompt = label, default = M.failed_instruction }, function(instruction)
     if instruction == nil or instruction == "" then
       return
     end
+    M.failed_instruction = nil
     local text = request.rewrite_text(buf, target)
     local line = {
       mode = "rewrite",
@@ -85,11 +93,15 @@ function M.prompt()
       filetype = vim.bo[buf].filetype,
       model = model,
     }
-    runner.run(line, function(outcome)
-      if outcome.type == "result" then
+    runner.run(line, { timeout_ms = M.config.timeout_ms }, function(outcome)
+      local kind = outcome.type
+      if kind == "result" then
         apply.apply(buf, target, outcome.text)
-      else
+      elseif kind == "error" or kind == "crash" or kind == "timeout" then
+        M.failed_instruction = instruction
         fail(outcome.message)
+      else
+        error("nvimpi: unhandled outcome " .. tostring(kind))
       end
     end)
   end)
