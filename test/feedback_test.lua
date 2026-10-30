@@ -13,6 +13,19 @@ local function ctrl_c_map()
   end
 end
 
+--- Rows the moving highlight lit over about `ms` milliseconds (several ticks).
+local function lit_rows(ms)
+  local ns = vim.api.nvim_get_namespaces()["nvimpi.feedback"]
+  local rows = {}
+  vim.wait(ms, function()
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, ns, 0, -1, {})) do
+      rows[mark[2]] = true
+    end
+    return false
+  end, 20)
+  return vim.tbl_keys(rows)
+end
+
 return {
   {
     "status() is empty when idle and shows progress while a request runs",
@@ -134,6 +147,24 @@ return {
       h.wait_changed(LINES)
       eq({ "one", "B", "three", "four" }, h.lines())
       eq({}, h.state.notes)
+    end,
+  },
+  {
+    "the highlight follows the target when lines are added or removed above it",
+    function()
+      h.reset({ lines = LINES, instruction = "x", response = { type = "result", text = "B\nC" }, sleep = 1.5 })
+      h.run_action("jVj")
+      h.wait_running()
+      vim.api.nvim_buf_set_lines(0, 0, 0, true, { "a", "b", "c" })
+      for _, row in ipairs(lit_rows(400)) do
+        assert(row == 4 or row == 5, "lit row " .. row .. " is on the moved target (rows 4-5)")
+      end
+      vim.api.nvim_buf_set_lines(0, 0, 4, true, {})
+      for _, row in ipairs(lit_rows(400)) do
+        assert(row == 0 or row == 1, "lit row " .. row .. " is on the moved target (rows 0-1)")
+      end
+      h.wait_changed({ "two", "three", "four" })
+      eq({ "B", "C", "four" }, h.lines())
     end,
   },
 }

@@ -1,6 +1,7 @@
 -- Model choice: setup()'s `model`, else the one :NvimpiModel saved to nvimpi.json.
 -- The file is re-read on every request, so a change from another Neovim instance applies.
 local runner = require("nvimpi.runner")
+local notify = require("nvimpi.notify")
 
 local M = {}
 
@@ -11,10 +12,6 @@ M.path = vim.fs.joinpath(vim.fn.stdpath("data"), "nvimpi.json")
 M.warned = false
 
 local REFUSAL = "nvimpi: model is set in setup(): remove it there to use :NvimpiModel"
-
-local function notify(message, level)
-  vim.notify(message, level, { title = "nvimpi" })
-end
 
 local function setup_model()
   local model = require("nvimpi").config.model
@@ -28,13 +25,11 @@ local function saved_model()
   if not vim.uv.fs_stat(M.path) then
     return nil
   end
-  local file, open_error = io.open(M.path, "r")
-  if not file then
-    return nil, open_error
+  local read_ok, lines = pcall(vim.fn.readfile, M.path, "b")
+  if not read_ok then
+    return nil, tostring(lines)
   end
-  local text = file:read("*a")
-  file:close()
-  local ok, value = pcall(vim.json.decode, text)
+  local ok, value = pcall(vim.json.decode, table.concat(lines, "\n"))
   if not ok then
     return nil, "not valid JSON"
   end
@@ -57,15 +52,31 @@ function M.current()
   return saved and { model = saved, source = "nvimpi.json" } or nil, problem
 end
 
---- The model for a request: like `current()`, warning once while nvimpi.json stays invalid.
----@return string?
+--- Splits "provider/id" at the first "/", so ids may contain "/" themselves.
+---@param model string
+---@return { provider: string, id: string }?
+function M.parse(model)
+  local provider, id = model:match("^([^/]+)/(.+)$")
+  return provider and { provider = provider, id = id } or nil
+end
+
+--- The model for a request, warning once while nvimpi.json stays invalid; or nil and the error to show.
+---@return { provider: string, id: string }? model
+---@return string? error
 function M.resolve()
   local current, problem = M.current()
   if problem and not M.warned then
     notify(("nvimpi: ignoring %s: %s"):format(M.path, problem), vim.log.levels.WARN)
   end
   M.warned = problem ~= nil
-  return current and current.model
+  if not current then
+    return nil, "nvimpi: no model set. Run :NvimpiModel or set model in setup()"
+  end
+  local model = M.parse(current.model)
+  if not model then
+    return nil, ("nvimpi: unknown model %s: run :NvimpiModel"):format(current.model)
+  end
+  return model
 end
 
 ---@param model string
@@ -114,7 +125,7 @@ function M.command(arg)
     return
   end
   if arg ~= "" then
-    if not arg:match("^[^/]+/.+$") then
+    if not M.parse(arg) then
       notify("nvimpi: expected provider/id, got " .. arg, vim.log.levels.ERROR)
       return
     end

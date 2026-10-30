@@ -46,6 +46,21 @@ function M.release(tracked)
   end
 end
 
+--- The rows the guarded text spans now (0-based, inclusive), or nil once it is no longer tracked.
+---@param tracked nvimpi.Tracked
+---@return integer? first_row
+---@return integer? last_row
+function M.rows(tracked)
+  if not vim.api.nvim_buf_is_valid(tracked.buf) then
+    return nil
+  end
+  local pos = vim.api.nvim_buf_get_extmark_by_id(tracked.buf, ns, tracked.mark, { details = true })
+  if pos[1] == nil or pos[3] == nil then
+    return nil
+  end
+  return pos[1], math.max(pos[1], pos[3].end_row)
+end
+
 --- Where the target is now, or nil when its guarded text changed.
 ---@param tracked nvimpi.Tracked
 ---@return nvimpi.Target?

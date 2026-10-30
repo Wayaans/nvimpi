@@ -10,8 +10,7 @@ local PULSE_TICKS = 5 -- a one-line target is lit for this many ticks, then dark
 
 ---@class nvimpi.Feedback
 ---@field buf integer
----@field first_row integer
----@field last_row integer
+---@field rows fun(): integer?, integer? the target's rows now: it moves when lines change above it
 ---@field tick integer
 ---@field started integer vim.uv.now() at start
 ---@field timer uv.uv_timer_t
@@ -35,36 +34,36 @@ local function draw(state)
     return
   end
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+  local first_row, last_row = state.rows()
+  if not first_row or not last_row then
+    return
+  end
   local row
-  local count = state.last_row - state.first_row + 1
+  local count = last_row - first_row + 1
   if count == 1 then
     if math.floor(state.tick / PULSE_TICKS) % 2 == 1 then
       return
     end
-    row = state.first_row
+    row = first_row
   else
-    row = state.first_row + state.tick % count
+    row = first_row + state.tick % count
   end
-  -- The buffer stays editable, so the target may have shrunk.
-  row = math.min(row, vim.api.nvim_buf_line_count(buf) - 1)
   vim.api.nvim_buf_set_extmark(buf, ns, row, 0, { line_hl_group = "NvimpiWorking" })
 end
 
---- Starts the feedback for a request on rows first_row..last_row (0-based) of `buf`.
---- `on_cancel` runs when the user presses <C-c> in Normal mode.
+--- Starts the feedback for a request on `buf`, lighting the rows `rows()` returns (0-based,
+--- inclusive) on each tick. `on_cancel` runs when the user presses <C-c> in Normal mode.
 ---@param buf integer
----@param first_row integer
----@param last_row integer
+---@param rows fun(): integer?, integer?
 ---@param on_cancel fun()
-function M.start(buf, first_row, last_row, on_cancel)
+function M.start(buf, rows, on_cancel)
   assert(not active, "nvimpi: feedback already running")
   -- Set on every start: a :colorscheme clears default links.
   vim.api.nvim_set_hl(0, "NvimpiWorking", { link = "Visual", default = true })
 
   local state = {
     buf = buf,
-    first_row = first_row,
-    last_row = last_row,
+    rows = rows,
     tick = 0,
     started = vim.uv.now(),
     timer = assert(vim.uv.new_timer()),

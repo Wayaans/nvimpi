@@ -38,13 +38,13 @@ local function check_model()
     vim.health.warn("no model set", { "Run :NvimpiModel to pick one, or set model in setup()" })
     return nil
   end
-  local provider = current.model:match("^([^/]+)/.")
-  if not provider then
+  local model = require("nvimpi.model").parse(current.model)
+  if not model then
     vim.health.error(("model %s is not provider/id"):format(current.model), { "Run :NvimpiModel to pick one" })
     return nil
   end
   vim.health.ok(("model %s (from %s)"):format(current.model, current.source))
-  return provider
+  return model.provider
 end
 
 --- Reports what covers `provider`: a setup() key wins over auth.json and env, as in a request.
