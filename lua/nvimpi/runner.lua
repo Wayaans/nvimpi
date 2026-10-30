@@ -15,6 +15,7 @@ M.node = "node"
 M.node_version = nil
 
 local STDERR_TAIL_LINES = 10
+local LIST_TIMEOUT_MS = 10000
 local SIGTERM = 15
 
 ---@alias nvimpi.Outcome
@@ -64,24 +65,46 @@ local function stderr_tail(stderr)
   return "\n" .. table.concat(lines, "\n", math.max(1, #lines - STDERR_TAIL_LINES + 1))
 end
 
+--- The outcome of a finished sidecar: what `accept` makes of its stdout line, an error line,
+--- or else a timeout or crash.
 ---@param obj vim.SystemCompleted
 ---@param timeout_ms number
----@return nvimpi.Outcome
-local function outcome_of(obj, timeout_ms)
+---@param accept fun(response: table): table? the success outcome, or nil when `response` is not one
+---@return table
+local function outcome_of(obj, timeout_ms, accept)
   -- vim.system reports its own timeout as code 124 after sending TERM.
   if obj.code == 124 and obj.signal == SIGTERM then
     return { type = "timeout", message = ("nvimpi: timed out after %gs"):format(timeout_ms / 1000) }
   end
   local ok, response = pcall(vim.json.decode, (obj.stdout or ""):match("^[^\n]*"))
   if ok and type(response) == "table" then
-    if response.type == "result" and type(response.text) == "string" then
-      return { type = "result", text = response.text }
+    local outcome = accept(response)
+    if outcome then
+      return outcome
     elseif response.type == "error" and type(response.message) == "string" then
       return { type = "error", message = response.message }
     end
   end
   local how = obj.signal ~= 0 and ("signal %d"):format(obj.signal) or ("exit %d"):format(obj.code)
   return { type = "crash", message = ("nvimpi: sidecar crashed (%s)%s"):format(how, stderr_tail(obj.stderr)) }
+end
+
+---@param response table
+---@return nvimpi.Outcome?
+local function result_of(response)
+  if response.type == "result" and type(response.text) == "string" then
+    return { type = "result", text = response.text }
+  end
+end
+
+---@param response table
+---@return { type: "models", models: string[] }?
+local function models_of(response)
+  if vim.islist(response) and vim.iter(response):all(function(model)
+    return type(model) == "string"
+  end) then
+    return { type = "models", models = response }
+  end
 end
 
 ---@type { process: vim.SystemObj, cancelled: boolean }?
@@ -117,7 +140,7 @@ function M.run(request, opts, on_done)
     vim.schedule(function()
       local cancelled = current and current.cancelled
       current = nil
-      on_done(cancelled and { type = "cancel" } or outcome_of(obj, opts.timeout_ms))
+      on_done(cancelled and { type = "cancel" } or outcome_of(obj, opts.timeout_ms, result_of))
     end)
   end)
   if not ok then
@@ -125,6 +148,23 @@ function M.run(request, opts, on_done)
     return
   end
   current = { process = process, cancelled = false }
+end
+
+--- The models the user can pick, from `--list-models`. Blocks until the sidecar exits:
+--- it is quick, and completion needs the answer synchronously. Independent of `run()`.
+---@param provider_ids string[] providers with a setup() key: ids only, never the keys
+---@return { type: "models", models: string[] } | { type: "error"|"crash"|"timeout", message: string }
+function M.list_models(provider_ids)
+  local problem = node_problem()
+  if problem then
+    return { type = "error", message = problem }
+  end
+  local command = vim.list_extend(vim.list_extend({}, M.command), { "--list-models", unpack(provider_ids) })
+  local ok, process = pcall(vim.system, command, { text = true, timeout = LIST_TIMEOUT_MS })
+  if not ok then
+    return { type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(process) }
+  end
+  return outcome_of(process:wait(), LIST_TIMEOUT_MS, models_of)
 end
 
 return M

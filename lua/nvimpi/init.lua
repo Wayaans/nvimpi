@@ -2,6 +2,7 @@ local request = require("nvimpi.request")
 local runner = require("nvimpi.runner")
 local apply = require("nvimpi.apply")
 local feedback = require("nvimpi.feedback")
+local model_choice = require("nvimpi.model")
 
 local M = {}
 
@@ -33,8 +34,8 @@ M.failed_instruction = nil
 ---@return { provider: string, id: string }? model
 ---@return string? error
 local function current_model()
-  local model = M.config.model
-  if model == nil or model == "" then
+  local model = model_choice.resolve()
+  if model == nil then
     return nil, "nvimpi: no model set. Run :NvimpiModel or set model in setup()"
   end
   local provider, id = model:match("^([^/]+)/(.+)$")

@@ -21,9 +21,20 @@ require("nvimpi").setup({ model = "anthropic/claude-sonnet-4-5" })
 vim.keymap.set("x", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Rewrite selection" })
 ```
 
-`model` is `"provider/id"` using pi-ai's provider ids. It is split at the first `/`, so ids like `openrouter/anthropic/claude-sonnet-4-5` work. There is no default model.
+`model` is `"provider/id"` using pi-ai's provider ids. It is split at the first `/`, so ids like `openrouter/anthropic/claude-sonnet-4-5` work. There is no default model: set one in `setup()` or with `:NvimpiModel`.
 
 `timeout_ms` (a number, default `120000`) limits how long a request may run. After it the sidecar is killed and nvimpi reports `nvimpi: timed out after <n>s`. Raise it for slow local models: `setup({ model = "...", timeout_ms = 300000 })`.
+
+### Choosing a model
+
+Instead of `model` in `setup()`, you can pick one from Neovim:
+
+- `:NvimpiModel provider/id` sets the model. `<Tab>` completes the ids.
+- `:NvimpiModel` with no argument opens a picker (`vim.ui.select`) over the models of every provider you have credentials for: a pi login or key, a set environment variable, or an `api_keys` entry. If no provider has credentials, it says so instead.
+
+The choice is saved to `stdpath("data")/nvimpi.json` as `{"model":"provider/id"}` and read again on every request, so a change made in another Neovim instance (or by editing the file) applies to the next request. If the file is unreadable or invalid, nvimpi warns once and treats the model as unset.
+
+`model` in `setup()` always wins. While it is set, `:NvimpiModel` refuses with `model is set in setup(): remove it there to use :NvimpiModel`.
 
 ### Credentials
 
@@ -100,7 +111,7 @@ The sidecar is TypeScript in `sidecar/src`, bundled with esbuild into `sidecar/d
 
 ```sh
 npm install          # dev only: pi-durable, pi-ai and esbuild
-npm test             # sidecar handler tests (node --test, pi-ai faux provider)
+npm test             # sidecar handler and --list-models tests (node --test, pi-ai faux provider)
 npm run build        # bundle sidecar/src into sidecar/dist/sidecar.mjs
 npm run smoke        # run the bundle from an empty directory with no node_modules
 npm run test:lua     # Lua tests in headless Neovim with a fake sidecar
