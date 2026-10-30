@@ -127,6 +127,34 @@ test("a partial-line selection does not mention the trailing newline", async () 
   assert.doesNotMatch(systemText(seen[0]!), /trailing newline/);
 });
 
+function insertRequest(overrides: Record<string, unknown> = {}): string {
+  return request({ mode: "insert", instruction: "add a log", before: "foo(", selection: "", after: "bar)\n", ...overrides });
+}
+
+test("insert sends an Insert system prompt and marks the cursor between before and after", async () => {
+  reply("x");
+  await respond(insertRequest());
+  const system = systemText(seen[0]!);
+  assert.match(system, /<cursor\/>/);
+  assert.match(system, /only the text to insert/);
+  assert.match(system, /lua/);
+  assert.doesNotMatch(system, /<selection>|replacement text|trailing newline/);
+  const user = userText(seen[0]!);
+  assert.ok(user.includes("add a log"), "user message contains the instruction");
+  assert.ok(user.includes("foo(<cursor/>bar)"), "the cursor marker sits between before and after");
+  assert.doesNotMatch(user, /<selection>/);
+});
+
+test("insert returns the model's reply, fence stripped", async () => {
+  reply("```lua\nlog(1)\nlog(2)\n```");
+  assert.deepEqual(await respond(insertRequest()), { type: "result", text: "log(1)\nlog(2)" });
+});
+
+test("insert drops one trailing newline from the reply", async () => {
+  reply("log(1)\n");
+  assert.deepEqual(await respond(insertRequest({ before: "a\n", after: "\nb\n" })), { type: "result", text: "log(1)" });
+});
+
 test("strips a code fence around the whole reply", async () => {
   reply("```lua\nprint('HI')\nprint('YO')\n```");
   assert.deepEqual(await respond(request()), { type: "result", text: "print('HI')\nprint('YO')" });

@@ -154,10 +154,13 @@ function userMessage(request: Request): string {
 
 const FENCED = /^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/;
 
-/** Strips a code fence wrapped around the whole reply, and a trailing newline the selection did not have. */
+/**
+ * Strips a code fence wrapped around the whole reply, and a trailing newline the selection did not have.
+ * An Insert's selection is "", so its reply never ends in a newline that would split the cursor line.
+ */
 function cleanReply(text: string, request: Request): string {
   let reply = FENCED.exec(text)?.[1] ?? text;
-  if (request.mode === "rewrite" && reply.endsWith("\n") && !request.selection.endsWith("\n")) {
+  if (reply.endsWith("\n") && !request.selection.endsWith("\n")) {
     reply = reply.slice(0, -1);
   }
   return reply;

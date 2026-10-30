@@ -333,7 +333,7 @@ ${rat}${n}`}function uat(t){let e=[];for(let n of t)if(n.role==="user"){let r=Lb
 `)}}function Nat(t){let e=t.mode==="rewrite"?`${t.before}<selection>${t.selection}</selection>${t.after}`:`${t.before}<cursor/>${t.after}`;return`Instruction: ${t.instruction}
 
 File:
-${e}`}var Fat=/^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/;function Bat(t,e){let n=Fat.exec(t)?.[1]??t;return e.mode==="rewrite"&&n.endsWith(`
+${e}`}var Fat=/^\s*```[^\n`]*\n([\s\S]*?)\n?```\s*$/;function Bat(t,e){let n=Fat.exec(t)?.[1]??t;return n.endsWith(`
 `)&&!e.selection.endsWith(`
 `)&&(n=n.slice(0,-1)),n}async function $at(){let t=[];for await(let e of process.stdin)t.push(e);return Buffer.concat(t).toString("utf8")}async function Hat(){a9();let e=(await $at()).split(`
 `,1)[0]??"",n=await ike(e,r=>Nle({credentials:r}));process.stdout.write(`${n}
