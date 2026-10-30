@@ -2,6 +2,14 @@
 # Fake sidecar for the Lua tests: saves the request line, then optionally writes
 # $NVIMPI_FAKE_STDERR, sleeps $NVIMPI_FAKE_SLEEP seconds, prints $NVIMPI_FAKE_RESPONSE
 # (if set) and exits with $NVIMPI_FAKE_EXIT.
+# With --list-models it saves its arguments (one per line) to $NVIMPI_FAKE_LIST_ARGS
+# and prints $NVIMPI_FAKE_MODELS instead.
+if [ "$1" = "--list-models" ]; then
+  shift
+  printf '%s\n' "$@" > "$NVIMPI_FAKE_LIST_ARGS"
+  printf '%s\n' "$NVIMPI_FAKE_MODELS"
+  exit 0
+fi
 cat > "$NVIMPI_FAKE_REQUEST"
 if [ -n "$NVIMPI_FAKE_STDERR" ]; then printf '%s\n' "$NVIMPI_FAKE_STDERR" >&2; fi
 if [ -n "$NVIMPI_FAKE_SLEEP" ]; then

@@ -5,6 +5,11 @@ local H = {}
 
 H.request_file = vim.fn.tempname()
 H.node_log = vim.fn.tempname()
+H.list_args_file = vim.fn.tempname()
+--- Stands in for stdpath("data")/nvimpi.json, so tests never touch the real one.
+H.saved_model_file = vim.fn.tempname() .. "/nvimpi.json"
+
+vim.cmd.runtime("plugin/nvimpi.lua") -- `nvim -l` does not source plugin/ for a prepended 'runtimepath'
 
 ---@class helpers.State
 ---@field prompts string[] prompts shown by vim.ui.input
@@ -34,6 +39,8 @@ end
 ---@field sleep? number
 ---@field exit? integer
 ---@field api_keys? table
+---@field models? string[]|string what `--list-models` prints: a list encoded as JSON, or a raw string
+---@field saved? string raw contents of nvimpi.json; nil leaves no file
 ---@param opts helpers.ResetOpts
 function H.reset(opts)
   H.cancel_running()
@@ -62,6 +69,17 @@ function H.reset(opts)
   vim.env.NVIMPI_FAKE_SLEEP = opts.sleep and tostring(opts.sleep) or nil
   vim.env.NVIMPI_FAKE_EXIT = opts.exit and tostring(opts.exit) or nil
   vim.fn.delete(H.request_file)
+  vim.env.NVIMPI_FAKE_LIST_ARGS = H.list_args_file
+  vim.env.NVIMPI_FAKE_MODELS = type(opts.models) == "table" and vim.json.encode(opts.models) or opts.models or "[]"
+  vim.fn.delete(H.list_args_file)
+
+  local saved = require("nvimpi.model")
+  saved.path = H.saved_model_file
+  saved.warned = false
+  vim.fn.delete(vim.fs.dirname(H.saved_model_file), "rf")
+  if opts.saved then
+    H.write_saved(opts.saved)
+  end
 
   H.state = { prompts = {}, defaults = {}, notes = {} }
   vim.ui.input = function(input_opts, on_confirm)
@@ -73,6 +91,30 @@ function H.reset(opts)
     table.insert(H.state.notes, { msg = msg, level = level, opts = notify_opts })
   end
   return buf
+end
+
+--- Writes nvimpi.json as another Neovim instance or an editor would.
+function H.write_saved(text)
+  vim.fn.mkdir(vim.fs.dirname(H.saved_model_file), "p")
+  vim.fn.writefile(vim.split(text, "\n"), H.saved_model_file)
+end
+
+--- nvimpi.json's contents, or nil when there is none.
+function H.read_saved()
+  if vim.fn.filereadable(H.saved_model_file) == 0 then
+    return nil
+  end
+  return table.concat(vim.fn.readfile(H.saved_model_file), "\n")
+end
+
+--- The arguments `--list-models` got, or nil if it never ran.
+function H.list_args()
+  if vim.fn.filereadable(H.list_args_file) == 0 then
+    return nil
+  end
+  return vim.tbl_filter(function(arg)
+    return arg ~= ""
+  end, vim.fn.readfile(H.list_args_file))
 end
 
 --- Type `keys` (to make a selection), then run the action from a mapping, like a user would.

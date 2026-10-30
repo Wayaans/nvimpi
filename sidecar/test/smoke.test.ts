@@ -18,9 +18,9 @@ before(() => {
 
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-function run(stdin: string, env: Record<string, string> = {}): unknown {
+function run(stdin: string, env: Record<string, string> = {}, args: string[] = []): unknown {
   // No provider env vars, HOME points at the empty dir, and fetch never reaches the network.
-  const result = spawnSync(process.execPath, ["--import", "./fetch-stub.mjs", "sidecar.mjs"], {
+  const result = spawnSync(process.execPath, ["--import", "./fetch-stub.mjs", "sidecar.mjs", ...args], {
     cwd: dir,
     input: stdin,
     env: { PATH: process.env.PATH, HOME: dir, ...env },
@@ -103,4 +103,16 @@ test("an expired pi OAuth login asks the user to open pi", () => {
     code: "provider",
     message: `anthropic login in ${join(env.PI_CODING_AGENT_DIR!, "auth.json")} has expired: open pi to refresh your anthropic login`,
   });
+});
+
+test("--list-models with no credentials prints an empty JSON array", () => {
+  assert.deepEqual(run("", {}, ["--list-models"]), []);
+});
+
+test("--list-models lists providers with an env var or auth.json entry, plus the ids passed in", () => {
+  const env = agentDir("list", { openai: { type: "api_key", key: "!exit 1" } });
+  const listed = run("", { ...env, ANTHROPIC_API_KEY: "env-key" }, ["--list-models", "mistral"]) as string[];
+  assert.ok(listed.includes("anthropic/claude-sonnet-4-5"), "env var provider");
+  const providers = new Set(listed.map((model) => model.slice(0, model.indexOf("/"))));
+  assert.deepEqual([...providers].sort(), ["anthropic", "mistral", "openai"]);
 });
