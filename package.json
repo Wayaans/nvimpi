@@ -1,0 +1,22 @@
+{
+  "name": "nvimpi-sidecar",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "esbuild sidecar/src/main.ts --bundle --platform=node --format=esm --target=node22 --minify --legal-comments=none --outfile=sidecar/dist/sidecar.mjs",
+    "test": "node --test sidecar/test/handler.test.ts",
+    "smoke": "node --test sidecar/test/smoke.test.ts",
+    "test:lua": "nvim --headless --clean -l test/run.lua"
+  },
+  "dependencies": {
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}
