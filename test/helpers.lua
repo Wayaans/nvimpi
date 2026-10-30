@@ -33,6 +33,7 @@ end
 ---@field stderr? string
 ---@field sleep? number
 ---@field exit? integer
+---@field api_keys? table
 ---@param opts helpers.ResetOpts
 function H.reset(opts)
   H.cancel_running()
@@ -44,7 +45,7 @@ function H.reset(opts)
   vim.cmd("let &undolevels = &undolevels") -- the user's own edits end before the request
 
   local model = opts.model == nil and "faux/m1" or opts.model or nil
-  require("nvimpi").setup({ model = model, timeout_ms = opts.timeout_ms })
+  require("nvimpi").setup({ model = model, timeout_ms = opts.timeout_ms, api_keys = opts.api_keys })
   require("nvimpi").failed_instruction = nil
   local runner = require("nvimpi.runner")
   runner.command = { "sh", root .. "/test/fake_sidecar.sh" }

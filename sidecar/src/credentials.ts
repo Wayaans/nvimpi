@@ -62,6 +62,27 @@ export function layeredStore(layers: readonly CredentialStore[]): CredentialStor
 }
 
 /**
+ * The key from the user's setup() for one provider, held in memory for this request only.
+ * Placed first, it owns that provider; other providers have no entry here.
+ */
+export function requestKeyStore(providerId: string, key: string): CredentialStore {
+  const credential: Credential = { type: "api_key", key };
+  const readOnly = async (): Promise<never> => {
+    throw new CredentialError(`nvimpi never changes the ${providerId} key from setup()`);
+  };
+  return {
+    async read(id) {
+      return id === providerId ? credential : undefined;
+    },
+    async list() {
+      return [{ providerId, type: "api_key" }];
+    },
+    modify: readOnly,
+    delete: readOnly,
+  };
+}
+
+/**
  * pi's auth.json, read directly and never written. API keys resolve like pi's: a literal,
  * `$ENV` / `${ENV}`, or `!command`. Each entry resolves at most once per store, so one
  * request runs a key command once. A missing file has no entries.
