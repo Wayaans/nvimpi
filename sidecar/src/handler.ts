@@ -1,4 +1,5 @@
-import type { Models } from "@earendil-works/pi-ai";
+import type { CredentialStore, Models } from "@earendil-works/pi-ai";
+import { authJsonPath, authJsonStore, CredentialError, layeredStore } from "./credentials.ts";
 import { completeOnce } from "./durable.ts";
 
 /** One request line from Lua. `before + selection + after` is a verbatim stretch of the buffer. */
@@ -16,16 +17,21 @@ type ErrorCode = "not_configured" | "provider" | "invalid_request" | "internal";
 
 export type Response = { type: "result"; text: string } | { type: "error"; code: ErrorCode; message: string };
 
+/** Builds the model collection for one request over its credentials. */
+export type CreateModels = (credentials: CredentialStore) => Models;
+
 /** Turns one request line into exactly one response line (no trailing newline). */
-export async function handleRequest(line: string, models: Models): Promise<string> {
-  return JSON.stringify(await respond(line, models));
+export async function handleRequest(line: string, createModels: CreateModels): Promise<string> {
+  return JSON.stringify(await respond(line, createModels));
 }
 
-async function respond(line: string, models: Models): Promise<Response> {
+async function respond(line: string, createModels: CreateModels): Promise<Response> {
   const parsed = parseRequest(line);
   if (typeof parsed === "string") return error("invalid_request", `invalid request: ${parsed}`);
   const request = parsed;
   const { provider, id } = request.model;
+  // Credential layers, first match wins; provider env vars come after all of them (pi-ai).
+  const models = createModels(layeredStore([authJsonStore(authJsonPath())]));
 
   if (!models.getModel(provider, id)) {
     return error("not_configured", `unknown model ${provider}/${id}: run :NvimpiModel`);
@@ -35,7 +41,8 @@ async function respond(line: string, models: Models): Promise<Response> {
       return error("not_configured", `no credentials for ${provider}: log in with pi, or set its API key env var`);
     }
   } catch (cause) {
-    return error("provider", `${provider} credentials: ${messageOf(cause)}`);
+    const problem = credentialProblem(cause);
+    return error("provider", problem ? problem.message : `${provider} credentials: ${messageOf(cause)}`);
   }
 
   try {
@@ -53,6 +60,14 @@ async function respond(line: string, models: Models): Promise<Response> {
 
 function error(code: ErrorCode, message: string): Response {
   return { type: "error", code, message };
+}
+
+/** pi-ai wraps credential store failures; find ours in the cause chain. */
+function credentialProblem(cause: unknown): CredentialError | undefined {
+  for (let current = cause; current instanceof Error; current = current.cause) {
+    if (current instanceof CredentialError) return current;
+  }
+  return undefined;
 }
 
 function messageOf(cause: unknown): string {

@@ -1,27 +1,29 @@
 // Runs the committed bundle as Lua does: a separate process, from a directory with no node_modules.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 
 const BUNDLE = new URL("../dist/sidecar.mjs", import.meta.url).pathname;
+const FETCH_STUB = new URL("./fetch-stub.mjs", import.meta.url).pathname;
 let dir: string;
 
 before(() => {
   dir = mkdtempSync(join(tmpdir(), "nvimpi-smoke-"));
   copyFileSync(BUNDLE, join(dir, "sidecar.mjs"));
+  copyFileSync(FETCH_STUB, join(dir, "fetch-stub.mjs"));
 });
 
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-function run(stdin: string): unknown {
-  // No provider env vars, and HOME points at the empty dir.
-  const result = spawnSync(process.execPath, ["sidecar.mjs"], {
+function run(stdin: string, env: Record<string, string> = {}): unknown {
+  // No provider env vars, HOME points at the empty dir, and fetch never reaches the network.
+  const result = spawnSync(process.execPath, ["--import", "./fetch-stub.mjs", "sidecar.mjs"], {
     cwd: dir,
     input: stdin,
-    env: { PATH: process.env.PATH, HOME: dir },
+    env: { PATH: process.env.PATH, HOME: dir, ...env },
     encoding: "utf8",
     timeout: 10_000,
   });
@@ -56,5 +58,40 @@ test("a bundled provider without credentials gives not_configured", () => {
     type: "error",
     code: "not_configured",
     message: "no credentials for anthropic: log in with pi, or set its API key env var",
+  });
+});
+
+/** Writes an auth.json into a fresh agent dir and returns the env pointing at it. */
+function agentDir(name: string, auth: unknown): Record<string, string> {
+  const path = join(dir, name);
+  mkdirSync(path);
+  writeFileSync(join(path, "auth.json"), JSON.stringify(auth));
+  return { PI_CODING_AGENT_DIR: path };
+}
+
+const SONNET = { provider: "anthropic", id: "claude-sonnet-4-5" };
+
+test("an auth.json API key is sent, and wins over the provider env var", () => {
+  const env = agentDir("api-key", { anthropic: { type: "api_key", key: "file-key" } });
+  const out = run(request(SONNET), { ...env, ANTHROPIC_API_KEY: "env-key" }) as { code: string; message: string };
+  assert.equal(out.code, "provider");
+  assert.match(out.message, /fetch-stub saw file-key/);
+});
+
+// The OAuth bundle spike: pi-ai loads OAuth flows through an import esbuild cannot follow,
+// so toAuth only works in the bundle because main registers them with registerBunOAuthFlows().
+test("a valid pi OAuth login works inside the bundle", () => {
+  const login = { type: "oauth", access: "oauth-access", refresh: "r", expires: Date.now() + 3_600_000 };
+  const out = run(request(SONNET), agentDir("oauth", { anthropic: login })) as { code: string; message: string };
+  assert.equal(out.code, "provider");
+  assert.match(out.message, /fetch-stub saw oauth-access/);
+});
+
+test("an expired pi OAuth login asks the user to open pi", () => {
+  const env = agentDir("expired", { anthropic: { type: "oauth", access: "a", refresh: "r", expires: 1 } });
+  assert.deepEqual(run(request(SONNET), env), {
+    type: "error",
+    code: "provider",
+    message: `anthropic login in ${join(env.PI_CODING_AGENT_DIR!, "auth.json")} has expired: open pi to refresh your anthropic login`,
   });
 });
