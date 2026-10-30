@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { createModels, envApiKeyAuth, fauxProvider } from "@earendil-works/pi-ai";
 import type { CredentialStore, MutableModels } from "@earendil-works/pi-ai";
-import { listModels } from "../src/list-models.ts";
+import { credentialSource, listModels } from "../src/list-models.ts";
 
 const FAUX_ENV = "NVIMPI_TEST_FAUX_KEY";
 const OTHER_ENV = "NVIMPI_TEST_OTHER_KEY";
@@ -83,4 +83,44 @@ test("a malformed auth.json is an error line naming the path", async () => {
   assert.equal(out.type, "error");
   assert.equal(out.code, "provider");
   assert.match(out.message, new RegExp(`^cannot read pi credentials from ${join(agentDir, "auth.json")}`));
+});
+
+async function source(providerId: string): Promise<unknown> {
+  const out = await credentialSource(providerId, makeModels);
+  assert.ok(!out.includes("\n"), "output is exactly one line");
+  return JSON.parse(out);
+}
+
+test("credential source: none when nothing covers the provider", async () => {
+  assert.deepEqual(await source("faux"), { type: "source", source: "none" });
+});
+
+test("credential source: env when only the provider's env var is set", async () => {
+  process.env[FAUX_ENV] = "env-secret";
+  assert.deepEqual(await source("faux"), { type: "source", source: "env" });
+});
+
+test("credential source: auth.json wins over env, without running its key command", async () => {
+  const marker = join(agentDir, "ran");
+  process.env[FAUX_ENV] = "env-secret";
+  writeAuth({ faux: { type: "api_key", key: `!touch ${marker}` } });
+  assert.deepEqual(await source("faux"), { type: "source", source: "auth.json" });
+  assert.equal(existsSync(marker), false, "the key command never ran");
+});
+
+test("credential source: another provider's entry does not count", async () => {
+  writeAuth({ other: { type: "api_key", key: "k" } });
+  assert.deepEqual(await source("faux"), { type: "source", source: "none" });
+});
+
+test("credential source: an unknown provider says so", async () => {
+  assert.deepEqual(await source("nobody"), { type: "source", source: "unknown" });
+});
+
+test("credential source: a malformed auth.json is an error line that quotes none of the file", async () => {
+  writeAuth('{"faux":{"type":"api_key","key":sk-secret-value}}');
+  const out = (await source("faux")) as { type: string; code: string; message: string };
+  assert.equal(out.type, "error");
+  assert.equal(out.code, "provider");
+  assert.equal(out.message, `cannot read pi credentials from ${join(agentDir, "auth.json")}: not valid JSON`);
 });

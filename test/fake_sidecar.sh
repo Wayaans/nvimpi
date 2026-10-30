@@ -4,10 +4,16 @@
 # (if set) and exits with $NVIMPI_FAKE_EXIT.
 # With --list-models it saves its arguments (one per line) to $NVIMPI_FAKE_LIST_ARGS
 # and prints $NVIMPI_FAKE_MODELS instead.
+# With --credential-source it saves all its arguments the same way and prints $NVIMPI_FAKE_SOURCE.
 if [ "$1" = "--list-models" ]; then
   shift
   printf '%s\n' "$@" > "$NVIMPI_FAKE_LIST_ARGS"
   printf '%s\n' "$NVIMPI_FAKE_MODELS"
+  exit 0
+fi
+if [ "$1" = "--credential-source" ]; then
+  printf '%s\n' "$@" > "$NVIMPI_FAKE_LIST_ARGS"
+  printf '%s\n' "$NVIMPI_FAKE_SOURCE"
   exit 0
 fi
 cat > "$NVIMPI_FAKE_REQUEST"

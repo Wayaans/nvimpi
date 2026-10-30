@@ -4,8 +4,11 @@ local M = {}
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h:h")
 
+--- Internal: the bundled sidecar, which :checkhealth looks for.
+M.sidecar = root .. "/sidecar/dist/sidecar.mjs"
+
 --- Internal, not a setup() option: the sidecar command. Tests swap in a fake script.
-M.command = { "node", root .. "/sidecar/dist/sidecar.mjs" }
+M.command = { "node", M.sidecar }
 
 --- Internal: the `node` the version check looks for on PATH. Tests swap in a fake script.
 M.node = "node"
@@ -36,23 +39,33 @@ local function supported(version)
   return major > 22 or (major == 22 and minor >= 19)
 end
 
+--- Whether node is usable (on PATH and 22.19+), and what was found: the version, "" when
+--- `node --version` printed nothing, or nil when node is not on PATH. The version is cached.
+---@return boolean ok
+---@return string? found
+function M.node_status()
+  if vim.fn.executable(M.node) == 0 then
+    return false, nil
+  end
+  if M.node_version == nil then
+    local ok, obj = pcall(function()
+      return vim.system({ M.node, "--version" }, { text = true }):wait(5000)
+    end)
+    M.node_version = ok and vim.trim(obj.stdout or "") or ""
+  end
+  return supported(M.node_version), M.node_version
+end
+
 --- nil when node is usable, otherwise the message to show.
 ---@return string?
 local function node_problem()
-  local found = "none"
-  if vim.fn.executable(M.node) == 1 then
-    if M.node_version == nil then
-      local ok, obj = pcall(function()
-        return vim.system({ M.node, "--version" }, { text = true }):wait(5000)
-      end)
-      M.node_version = ok and vim.trim(obj.stdout or "") or ""
-    end
-    if supported(M.node_version) then
-      return nil
-    end
-    found = M.node_version ~= "" and M.node_version or "none"
+  local ok, found = M.node_status()
+  if ok then
+    return nil
   end
-  return ("nvimpi: Node 22.19+ required (found %s). Run :checkhealth nvimpi"):format(found)
+  return ("nvimpi: Node 22.19+ required (found %s). Run :checkhealth nvimpi"):format(
+    found ~= nil and found ~= "" and found or "none"
+  )
 end
 
 ---@param stderr string?
@@ -150,21 +163,45 @@ function M.run(request, opts, on_done)
   current = { process = process, cancelled = false }
 end
 
---- The models the user can pick, from `--list-models`. Blocks until the sidecar exits:
---- it is quick, and completion needs the answer synchronously. Independent of `run()`.
----@param provider_ids string[] providers with a setup() key: ids only, never the keys
----@return { type: "models", models: string[] } | { type: "error"|"crash"|"timeout", message: string }
-function M.list_models(provider_ids)
+---@param response table
+---@return { type: "source", source: "auth.json"|"env"|"none"|"unknown" }?
+local function source_of(response)
+  if response.type == "source" and vim.list_contains({ "auth.json", "env", "none", "unknown" }, response.source) then
+    return { type = "source", source = response.source }
+  end
+end
+
+--- Runs the sidecar with `args` instead of a request and waits for it. Independent of `run()`.
+---@param args string[]
+---@param accept fun(response: table): table?
+---@return table
+local function query(args, accept)
   local problem = node_problem()
   if problem then
     return { type = "error", message = problem }
   end
-  local command = vim.list_extend(vim.list_extend({}, M.command), { "--list-models", unpack(provider_ids) })
+  local command = vim.list_extend(vim.list_extend({}, M.command), args)
   local ok, process = pcall(vim.system, command, { text = true, timeout = LIST_TIMEOUT_MS })
   if not ok then
     return { type = "error", message = "nvimpi: could not start the sidecar: " .. tostring(process) }
   end
-  return outcome_of(process:wait(), LIST_TIMEOUT_MS, models_of)
+  return outcome_of(process:wait(), LIST_TIMEOUT_MS, accept)
+end
+
+--- The models the user can pick, from `--list-models`. Blocks until the sidecar exits:
+--- it is quick, and completion needs the answer synchronously.
+---@param provider_ids string[] providers with a setup() key: ids only, never the keys
+---@return { type: "models", models: string[] } | { type: "error"|"crash"|"timeout", message: string }
+function M.list_models(provider_ids)
+  return query({ "--list-models", unpack(provider_ids) }, models_of)
+end
+
+--- Which source covers `provider` when there is no setup() key, from `--credential-source`.
+--- Blocks until the sidecar exits. Never runs key commands or prints a key.
+---@param provider string
+---@return { type: "source", source: "auth.json"|"env"|"none"|"unknown" } | { type: "error"|"crash"|"timeout", message: string }
+function M.credential_source(provider)
+  return query({ "--credential-source", provider }, source_of)
 end
 
 return M

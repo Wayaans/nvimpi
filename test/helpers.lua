@@ -9,6 +9,8 @@ H.list_args_file = vim.fn.tempname()
 --- Stands in for stdpath("data")/nvimpi.json, so tests never touch the real one.
 H.saved_model_file = vim.fn.tempname() .. "/nvimpi.json"
 
+local default_sidecar = require("nvimpi.runner").sidecar
+
 vim.cmd.runtime("plugin/nvimpi.lua") -- `nvim -l` does not source plugin/ for a prepended 'runtimepath'
 
 ---@class helpers.State
@@ -41,6 +43,7 @@ end
 ---@field api_keys? table
 ---@field models? string[]|string what `--list-models` prints: a list encoded as JSON, or a raw string
 ---@field saved? string raw contents of nvimpi.json; nil leaves no file
+---@field source? table what `--credential-source` prints, encoded as JSON (default: source "none")
 ---@param opts helpers.ResetOpts
 function H.reset(opts)
   H.cancel_running()
@@ -71,7 +74,9 @@ function H.reset(opts)
   vim.fn.delete(H.request_file)
   vim.env.NVIMPI_FAKE_LIST_ARGS = H.list_args_file
   vim.env.NVIMPI_FAKE_MODELS = type(opts.models) == "table" and vim.json.encode(opts.models) or opts.models or "[]"
+  vim.env.NVIMPI_FAKE_SOURCE = vim.json.encode(opts.source or { type = "source", source = "none" })
   vim.fn.delete(H.list_args_file)
+  runner.sidecar = default_sidecar
 
   local saved = require("nvimpi.model")
   saved.path = H.saved_model_file

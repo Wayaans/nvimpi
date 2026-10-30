@@ -109,6 +109,13 @@ test("--list-models with no credentials prints an empty JSON array", () => {
   assert.deepEqual(run("", {}, ["--list-models"]), []);
 });
 
+test("--credential-source names what covers one provider", () => {
+  const env = agentDir("source", { openai: { type: "api_key", key: "!exit 1" } });
+  assert.deepEqual(run("", env, ["--credential-source", "openai"]), { type: "source", source: "auth.json" });
+  assert.deepEqual(run("", { ANTHROPIC_API_KEY: "k" }, ["--credential-source", "anthropic"]), { type: "source", source: "env" });
+  assert.deepEqual(run("", {}, ["--credential-source", "anthropic"]), { type: "source", source: "none" });
+});
+
 test("--list-models lists providers with an env var or auth.json entry, plus the ids passed in", () => {
   const env = agentDir("list", { openai: { type: "api_key", key: "!exit 1" } });
   const listed = run("", { ...env, ANTHROPIC_API_KEY: "env-key" }, ["--list-models", "mistral"]) as string[];
