@@ -11,6 +11,11 @@ M.path = vim.fs.joinpath(vim.fn.stdpath("data"), "nvimpi.json")
 --- Internal: whether the invalid-file warning was shown since the file was last valid.
 M.warned = false
 
+--- Internal: the models listed for the open command line. Listing runs the sidecar (about
+--- 90 ms, blocking), so completion lists once per command line instead of on every completion.
+---@type string[]?
+M.completion_models = nil
+
 local REFUSAL = "nvimpi: model is set in setup(): remove it there to use :NvimpiModel"
 
 local function setup_model()
@@ -149,13 +154,22 @@ function M.complete(arglead)
   if setup_model() then
     return {}
   end
-  local outcome = runner.list_models(setup_key_providers())
-  if outcome.type ~= "models" then
-    return {}
+  if not M.completion_models then
+    local outcome = runner.list_models(setup_key_providers())
+    if outcome.type ~= "models" then
+      return {}
+    end
+    M.completion_models = outcome.models
+    vim.api.nvim_create_autocmd("CmdlineLeave", {
+      once = true,
+      callback = function()
+        M.completion_models = nil
+      end,
+    })
   end
   return vim.tbl_filter(function(model)
     return vim.startswith(model, arglead)
-  end, outcome.models)
+  end, M.completion_models)
 end
 
 return M

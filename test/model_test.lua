@@ -167,6 +167,18 @@ return {
     end,
   },
   {
+    "tab completion lists the models once per command line, not on every completion",
+    function()
+      h.reset({ lines = { "a" }, model = false, models = { "faux/m1", "other/o1" } })
+      vim.api.nvim_exec_autocmds("CmdlineEnter", {})
+      eq({ "faux/m1" }, vim.fn.getcompletion("NvimpiModel f", "cmdline"))
+      vim.env.NVIMPI_FAKE_MODELS = vim.json.encode({ "faux/m2" })
+      eq({ "other/o1" }, vim.fn.getcompletion("NvimpiModel o", "cmdline"), "the list is kept while typing")
+      vim.api.nvim_exec_autocmds("CmdlineLeave", {})
+      eq({ "faux/m2" }, vim.fn.getcompletion("NvimpiModel f", "cmdline"), "a new command line lists again")
+    end,
+  },
+  {
     "an invalid nvimpi.json is treated as unset and warns once",
     function()
       h.reset({ lines = { "a" }, instruction = "x", model = false, saved = "{ not json" })

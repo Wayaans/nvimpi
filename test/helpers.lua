@@ -81,6 +81,7 @@ function H.reset(opts)
   local saved = require("nvimpi.model")
   saved.path = H.saved_model_file
   saved.warned = false
+  saved.completion_models = nil
   vim.fn.delete(vim.fs.dirname(H.saved_model_file), "rf")
   if opts.saved then
     H.write_saved(opts.saved)
