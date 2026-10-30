@@ -1,11 +1,12 @@
 // Sidecar entry: reads one request line from stdin (Lua closes stdin after it), or with
-// `--list-models [provider ids...]` lists the models the user can pick. Either way it writes
+// `--list-models [provider ids...]` lists the models the user can pick, or with
+// `--credential-source <provider>` reports which source covers that provider. Either way it writes
 // exactly one line to stdout, then exits. Logs go to stderr only.
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { handleRequest } from "./handler.ts";
 import type { CreateModels } from "./handler.ts";
-import { listModels } from "./list-models.ts";
+import { credentialSource, listModels } from "./list-models.ts";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -21,6 +22,8 @@ async function main(): Promise<void> {
   let response: string;
   if (flag === "--list-models") {
     response = await listModels(providerIds, createModels);
+  } else if (flag === "--credential-source") {
+    response = await credentialSource(providerIds[0] ?? "", createModels);
   } else {
     const input = await readStdin();
     response = await handleRequest(input.split("\n", 1)[0] ?? "", createModels);

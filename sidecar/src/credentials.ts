@@ -144,8 +144,9 @@ async function loadAuthJson(path: string): Promise<Record<string, unknown>> {
   let value: unknown;
   try {
     value = JSON.parse(text.replace(/^﻿/, ""));
-  } catch (cause) {
-    throw new CredentialError(`cannot read pi credentials from ${path}: ${messageOf(cause)}`);
+  } catch {
+    // JSON.parse's message quotes the text around the error, which can be part of a key.
+    throw new CredentialError(`cannot read pi credentials from ${path}: not valid JSON`);
   }
   if (!isRecord(value)) throw new CredentialError(`cannot read pi credentials from ${path}: expected a JSON object`);
   return value;

@@ -103,7 +103,9 @@ The highlight uses the `NvimpiWorking` group, linked to `Visual` by default.
 
 The model also sees up to 100 lines of Context above and below the selection, and the buffer's filetype.
 
-Run `:checkhealth nvimpi` to verify the setup.
+## Troubleshooting
+
+Run `:checkhealth nvimpi`. It checks Neovim, `node` (22.19 or newer on `PATH`), the bundled sidecar, the current model and where it comes from (`setup()` or `nvimpi.json`), and which credential source covers the model's provider (`api_keys` in setup(), pi's `auth.json`, or an environment variable). It never calls an `api_keys` function, runs an `auth.json` key command, or shows a key.
 
 ## Development
 
@@ -111,7 +113,7 @@ The sidecar is TypeScript in `sidecar/src`, bundled with esbuild into `sidecar/d
 
 ```sh
 npm install          # dev only: pi-durable, pi-ai and esbuild
-npm test             # sidecar handler and --list-models tests (node --test, pi-ai faux provider)
+npm test             # sidecar handler, --list-models and --credential-source tests (node --test, pi-ai faux provider)
 npm run build        # bundle sidecar/src into sidecar/dist/sidecar.mjs
 npm run smoke        # run the bundle from an empty directory with no node_modules
 npm run test:lua     # Lua tests in headless Neovim with a fake sidecar
