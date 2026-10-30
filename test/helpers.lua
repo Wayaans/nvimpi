@@ -101,7 +101,8 @@ end
 
 --- The request line the fake sidecar received, decoded, or nil if it never ran.
 function H.sent_request()
-  if vim.fn.filereadable(H.request_file) == 0 then
+  -- The fake's `cat >` creates the file before writing to it: empty means not written yet.
+  if vim.fn.getfsize(H.request_file) <= 0 then
     return nil
   end
   return vim.json.decode(table.concat(vim.fn.readfile(H.request_file), "\n"))
