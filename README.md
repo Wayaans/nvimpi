@@ -23,6 +23,8 @@ vim.keymap.set("x", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Rew
 
 `model` is `"provider/id"` using pi-ai's provider ids. It is split at the first `/`, so ids like `openrouter/anthropic/claude-sonnet-4-5` work. There is no default model.
 
+`timeout_ms` (a number, default `120000`) limits how long a request may run. After it the sidecar is killed and nvimpi reports `nvimpi: timed out after <n>s`. Raise it for slow local models: `setup({ model = "...", timeout_ms = 300000 })`.
+
 ### Credentials
 
 If you use [pi](https://github.com/earendil-works/pi), nvimpi reuses its logins with no extra setup. It reads pi's `auth.json` (`$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json`):
@@ -40,7 +42,8 @@ Select text (`v` or `V`), press your mapping, and type an Instruction at the `Re
 - A charwise selection replaces only the selected characters.
 - A linewise selection replaces whole lines and keeps the line structure.
 - An empty reply deletes the selection.
-- One `u` undoes the change. Success shows no message, and any failure shows one error titled `nvimpi`.
+- One `u` undoes the change. Success shows no message, and any failure shows one error titled `nvimpi` and leaves the buffer untouched.
+- After a failure, the next prompt opens with the failed Instruction filled in, so you can retry it or edit it.
 
 The model also sees up to 100 lines of Context above and below the selection, and the buffer's filetype.
 
