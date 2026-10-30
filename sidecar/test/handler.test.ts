@@ -365,7 +365,7 @@ test("a malformed auth.json is a provider error naming the path", async () => {
   const path = writeAuth("{ not json");
   const out = await respond(request());
   assert.equal(out.code, "provider");
-  assert.ok(out.message?.startsWith(`cannot read pi credentials from ${path}: `), out.message);
+  assert.ok(out.message?.startsWith(`cannot read pi credentials from ${path}: `), `got: ${out.message}`);
 });
 
 test("an auth.json that is not an object is a provider error naming the path", async () => {

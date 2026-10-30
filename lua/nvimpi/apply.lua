@@ -14,9 +14,15 @@ local ns = vim.api.nvim_create_namespace("nvimpi.apply")
 ---@field mark integer
 ---@field guarded string the guarded text when the request started
 
+--- An Insert's target: an empty charwise range at the cursor.
+---@param target nvimpi.Target
+local function is_insert(target)
+  return not target.linewise and target.start_row == target.end_row and target.start_col == target.end_col
+end
+
 ---@param target nvimpi.Target
 local function guards_lines(target)
-  return target.linewise or (target.start_row == target.end_row and target.start_col == target.end_col)
+  return target.linewise or is_insert(target)
 end
 
 ---@param buf integer
@@ -94,10 +100,7 @@ end
 ---@param target nvimpi.Target
 ---@param text string
 local function replace(buf, target, text)
-  local empty_range = not target.linewise
-    and target.start_row == target.end_row
-    and target.start_col == target.end_col
-  if text == "" and empty_range then
+  if text == "" and is_insert(target) then
     return -- nothing to change, so no undo step either (an empty Insert)
   end
   -- Start a new undo block so the change never merges with the user's last edit.
