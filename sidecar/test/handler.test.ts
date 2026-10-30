@@ -1,35 +1,71 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { createModels, envApiKeyAuth, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
-import type { FauxProviderHandle, MutableModels, TranscriptContext } from "@earendil-works/pi-ai";
+import type { CredentialStore, FauxProviderHandle, MutableModels, OAuthAuth, TranscriptContext } from "@earendil-works/pi-ai";
 import { handleRequest } from "../src/handler.ts";
 
 const KEY_ENV = "NVIMPI_TEST_FAUX_KEY";
 
 let faux: FauxProviderHandle;
-let models: MutableModels;
 let seen: TranscriptContext[];
+let seenKeys: (string | undefined)[];
+let refreshCalls: number;
+let agentDir: string;
 
 beforeEach(() => {
   faux = fauxProvider({ provider: "faux", models: [{ id: "m1" }] });
-  // Same faux model, but its credentials come from an env var like a real provider.
-  models = createModels();
-  models.setProvider({ ...faux.provider, auth: { apiKey: envApiKeyAuth("Faux", [KEY_ENV]) } });
   process.env[KEY_ENV] = "test-key";
   seen = [];
+  seenKeys = [];
+  refreshCalls = 0;
+  agentDir = mkdtempSync(join(tmpdir(), "nvimpi-agent-"));
+  process.env.PI_CODING_AGENT_DIR = agentDir;
 });
 
 afterEach(() => {
   delete process.env[KEY_ENV];
+  delete process.env.NVIMPI_TEST_REF;
+  delete process.env.PI_CODING_AGENT_DIR;
+  rmSync(agentDir, { recursive: true, force: true });
 });
+
+// A subscription login for the faux provider. Refresh must never run: nvimpi is read-only.
+const fauxOAuth: OAuthAuth = {
+  name: "Faux login",
+  login: async () => {
+    throw new Error("login is not used");
+  },
+  refresh: async (credential) => {
+    refreshCalls += 1;
+    return { ...credential, expires: Date.now() + 3_600_000 };
+  },
+  toAuth: async (credential) => ({ apiKey: `oauth:${String(credential.access)}` }),
+};
+
+/** The same faux model, with credentials resolved like a real provider (env var or OAuth). */
+function makeModels(credentials: CredentialStore): MutableModels {
+  const models = createModels({ credentials });
+  models.setProvider({ ...faux.provider, auth: { apiKey: envApiKeyAuth("Faux", [KEY_ENV]), oauth: fauxOAuth } });
+  return models;
+}
 
 function reply(text: string): void {
   faux.setResponses([
-    (context) => {
+    (context, options) => {
       seen.push(context);
+      seenKeys.push(options?.apiKey);
       return fauxAssistantMessage(text);
     },
   ]);
+}
+
+function writeAuth(content: unknown): string {
+  const path = join(agentDir, "auth.json");
+  writeFileSync(path, typeof content === "string" ? content : JSON.stringify(content, null, 2));
+  return path;
 }
 
 function request(overrides: Record<string, unknown> = {}): string {
@@ -45,10 +81,12 @@ function request(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-async function respond(line: string): Promise<unknown> {
-  const out = await handleRequest(line, models);
+type Out = { type: string; code?: string; message?: string; text?: string };
+
+async function respond(line: string): Promise<Out> {
+  const out = await handleRequest(line, makeModels);
   assert.ok(!out.includes("\n"), "response is exactly one line");
-  return JSON.parse(out);
+  return JSON.parse(out) as Out;
 }
 
 function systemText(context: TranscriptContext): string {
@@ -129,10 +167,10 @@ for (const [name, line] of [
   ["empty provider", request({ model: { provider: "", id: "m1" } })],
 ] as const) {
   test(`invalid_request: ${name}`, async () => {
-    const out = (await respond(line)) as { type: string; code: string; message: string };
+    const out = await respond(line);
     assert.equal(out.type, "error");
     assert.equal(out.code, "invalid_request");
-    assert.ok(out.message.length > 0);
+    assert.ok((out.message ?? "").length > 0);
   });
 }
 
@@ -163,8 +201,183 @@ test("not_configured when the provider has no credentials", async () => {
 
 test("a provider failure is a provider error carrying its message", async () => {
   faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "rate limited" })]);
-  const out = (await respond(request())) as { type: string; code: string; message: string };
+  const out = await respond(request());
   assert.equal(out.type, "error");
   assert.equal(out.code, "provider");
-  assert.match(out.message, /rate limited/);
+  assert.match(out.message ?? "", /rate limited/);
+});
+
+// --- Credentials: pi's auth.json, then provider env vars ---
+
+test("an auth.json literal key wins over the provider env var", async () => {
+  writeAuth({ faux: { type: "api_key", key: "from-file" } });
+  reply("ok");
+  assert.deepEqual(await respond(request()), { type: "result", text: "ok" });
+  assert.deepEqual(seenKeys, ["from-file"]);
+});
+
+test("an auth.json $ENV key reads that env var", async () => {
+  process.env.NVIMPI_TEST_REF = "via-env";
+  writeAuth({ faux: { type: "api_key", key: "$NVIMPI_TEST_REF" } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["via-env"]);
+});
+
+test("an auth.json ${ENV} key interpolates that env var", async () => {
+  process.env.NVIMPI_TEST_REF = "via-env";
+  writeAuth({ faux: { type: "api_key", key: "pre-${NVIMPI_TEST_REF}-post" } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["pre-via-env-post"]);
+});
+
+test("$$ and $! in an auth.json key are a literal $ and !", async () => {
+  writeAuth({ faux: { type: "api_key", key: "a$$b$!c" } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["a$b!c"]);
+});
+
+test("an auth.json !command key uses the command's trimmed stdout", async () => {
+  writeAuth({ faux: { type: "api_key", key: "!printf '  from-cmd\\n'" } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["from-cmd"]);
+});
+
+test("an auth.json !command runs once per request", async () => {
+  const counter = join(agentDir, "runs");
+  writeAuth({ faux: { type: "api_key", key: `!echo x >> '${counter}'; echo key` } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.equal(readFileSync(counter, "utf8"), "x\n");
+});
+
+test("an auth.json !command that times out is a provider error after 5 s", async () => {
+  const path = writeAuth({ faux: { type: "api_key", key: "!sleep 30; echo late" } });
+  reply("ok");
+  const started = Date.now();
+  const out = await respond(request());
+  const elapsed = Date.now() - started;
+  assert.deepEqual(out, {
+    type: "error",
+    code: "provider",
+    message: `faux key command in ${path} timed out after 5 s: sleep 30; echo late`,
+  });
+  assert.ok(elapsed >= 4_900 && elapsed < 9_000, `took ${elapsed} ms`);
+  assert.equal(seen.length, 0);
+});
+
+test("a failing auth.json !command is a provider error, not a fall through to the env var", async () => {
+  const path = writeAuth({ faux: { type: "api_key", key: "!exit 3" } });
+  reply("ok");
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `faux key command in ${path} failed (exit 3): exit 3`,
+  });
+  assert.equal(seen.length, 0);
+});
+
+test("an auth.json !command that prints nothing is a provider error", async () => {
+  const path = writeAuth({ faux: { type: "api_key", key: "!true" } });
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `faux key command in ${path} printed nothing: true`,
+  });
+});
+
+test("an auth.json key naming an unset env var does not fall through to the provider env var", async () => {
+  const path = writeAuth({ faux: { type: "api_key", key: "$NVIMPI_TEST_REF" } });
+  reply("ok");
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `faux key in ${path} uses $NVIMPI_TEST_REF, which is not set`,
+  });
+  assert.equal(seen.length, 0);
+});
+
+test("an auth.json entry of an unknown shape is a provider error naming the path", async () => {
+  const path = writeAuth({ faux: { type: "api_key", key: 42 } });
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `invalid faux entry in ${path}`,
+  });
+});
+
+test("a valid OAuth login from auth.json is used", async () => {
+  writeAuth({ faux: { type: "oauth", access: "tok", refresh: "r", expires: Date.now() + 3_600_000 } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["oauth:tok"]);
+});
+
+test("an expired OAuth login asks the user to open pi, and never refreshes or writes auth.json", async () => {
+  const path = writeAuth({ faux: { type: "oauth", access: "tok", refresh: "r", expires: Date.now() - 1_000, accountId: "x" } });
+  const before = readFileSync(path, "utf8");
+  const mtime = statSync(path).mtimeMs;
+  reply("ok");
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `faux login in ${path} has expired: open pi to refresh your faux login`,
+  });
+  assert.equal(refreshCalls, 0);
+  assert.equal(readFileSync(path, "utf8"), before);
+  assert.equal(statSync(path).mtimeMs, mtime);
+  assert.equal(seen.length, 0);
+});
+
+test("a malformed auth.json is a provider error naming the path", async () => {
+  const path = writeAuth("{ not json");
+  const out = await respond(request());
+  assert.equal(out.code, "provider");
+  assert.ok(out.message?.startsWith(`cannot read pi credentials from ${path}: `), out.message);
+});
+
+test("an auth.json that is not an object is a provider error naming the path", async () => {
+  const path = writeAuth("[]");
+  assert.deepEqual(await respond(request()), {
+    type: "error",
+    code: "provider",
+    message: `cannot read pi credentials from ${path}: expected a JSON object`,
+  });
+});
+
+test("a missing auth.json falls through to the provider env var", async () => {
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["test-key"]);
+});
+
+test("an auth.json without an entry for the provider falls through to the env var", async () => {
+  writeAuth({ other: { type: "api_key", key: "nope" } });
+  reply("ok");
+  assert.equal((await respond(request())).type, "result");
+  assert.deepEqual(seenKeys, ["test-key"]);
+});
+
+test("auth.json defaults to ~/.pi/agent, and PI_CODING_AGENT_DIR expands ~", async () => {
+  const home = process.env.HOME;
+  process.env.HOME = agentDir;
+  try {
+    delete process.env.PI_CODING_AGENT_DIR;
+    mkdirSync(join(agentDir, ".pi", "agent"), { recursive: true });
+    writeFileSync(join(agentDir, ".pi", "agent", "auth.json"), JSON.stringify({ faux: { type: "api_key", key: "default-dir" } }));
+    reply("ok");
+    await respond(request());
+
+    process.env.PI_CODING_AGENT_DIR = "~/custom";
+    mkdirSync(join(agentDir, "custom"));
+    writeFileSync(join(agentDir, "custom", "auth.json"), JSON.stringify({ faux: { type: "api_key", key: "custom-dir" } }));
+    reply("ok");
+    await respond(request());
+    assert.deepEqual(seenKeys, ["default-dir", "custom-dir"]);
+  } finally {
+    process.env.HOME = home;
+  }
 });

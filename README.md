@@ -23,7 +23,15 @@ vim.keymap.set("x", "<leader>p", require("nvimpi").prompt, { desc = "nvimpi: Rew
 
 `model` is `"provider/id"` using pi-ai's provider ids. It is split at the first `/`, so ids like `openrouter/anthropic/claude-sonnet-4-5` work. There is no default model.
 
-Credentials come from the provider's environment variable, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The variable must be set in the environment Neovim runs in.
+### Credentials
+
+If you use [pi](https://github.com/earendil-works/pi), nvimpi reuses its logins with no extra setup. It reads pi's `auth.json` (`$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json`):
+
+- API keys work as in pi: a literal key, `$ENV` or `${ENV}`, or `!command` (run in `sh` with a 5 s timeout, once per request).
+- Subscription logins (`/login` in pi) work while their token is valid. nvimpi never refreshes a token or writes the file, so when a login expires, open pi once to refresh it.
+- An entry for the provider always wins. If it is broken (for example its command fails), nvimpi reports the error instead of trying anything else.
+
+Without a pi entry for the provider, credentials come from the provider's environment variable, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The variable must be set in the environment Neovim runs in.
 
 ## Usage
 
