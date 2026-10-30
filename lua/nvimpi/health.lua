@@ -5,7 +5,7 @@ local M = {}
 
 --- Reports node and returns whether it is usable.
 local function check_node()
-  local ok, found = runner.node_status()
+  local ok, found = runner.node_status(true)
   if ok then
     vim.health.ok("node " .. found)
   elseif found == nil then

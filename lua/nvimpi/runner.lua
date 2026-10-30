@@ -40,14 +40,16 @@ local function supported(version)
 end
 
 --- Whether node is usable (on PATH and 22.19+), and what was found: the version, "" when
---- `node --version` printed nothing, or nil when node is not on PATH. The version is cached.
+--- `node --version` printed nothing, or nil when node is not on PATH. The version is cached;
+--- `fresh` reads it again (:checkhealth, where the Node error sends the user after an upgrade).
+---@param fresh? boolean
 ---@return boolean ok
 ---@return string? found
-function M.node_status()
+function M.node_status(fresh)
   if vim.fn.executable(M.node) == 0 then
     return false, nil
   end
-  if M.node_version == nil then
+  if M.node_version == nil or fresh then
     local ok, obj = pcall(function()
       return vim.system({ M.node, "--version" }, { text = true }):wait(5000)
     end)

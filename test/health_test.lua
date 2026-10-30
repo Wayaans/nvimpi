@@ -51,13 +51,17 @@ return {
     end,
   },
   {
-    "node missing or too old is an ERROR, and the check reuses the runner's cached version",
+    "node missing or too old is an ERROR; the check re-reads the version, so an upgrade shows and applies",
     function()
-      h.reset({ lines = { "" } })
+      h.reset({ lines = { "a" }, instruction = "x", response = { type = "result", text = "b" } })
       vim.env.NVIMPI_FAKE_NODE_VERSION = "v20.1.0"
       eq("error", item(check(), "node v20.1.0").level)
-      check()
-      eq(1, h.node_runs())
+      vim.env.NVIMPI_FAKE_NODE_VERSION = "v22.19.0" -- the user upgrades node, as the error advises
+      eq("ok", item(check(), "node v22.19.0").level)
+      h.run_action("ggV")
+      h.wait_changed({ "a" })
+      eq({}, h.state.notes, "the request uses the version the check found")
+      eq(2, h.node_runs(), "the request reuses it without running node again")
 
       h.reset({ lines = { "" } })
       require("nvimpi.runner").node = "/nonexistent/node"
