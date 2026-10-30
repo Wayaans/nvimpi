@@ -31,7 +31,7 @@ end
 
 local function draw(state)
   local buf = state.buf
-  if not vim.api.nvim_buf_is_valid(buf) then
+  if not vim.api.nvim_buf_is_loaded(buf) then
     return
   end
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)

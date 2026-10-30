@@ -150,13 +150,21 @@ function M.prompt()
       model = model,
       api_key = api_key, -- only on stdin: never in argv or the environment
     }
+    local tracked = apply.track(buf, target)
     feedback.start(buf, target.start_row, target.end_row, runner.cancel)
     runner.run(line, { timeout_ms = M.config.timeout_ms }, function(outcome)
       feedback.stop()
       local kind = outcome.type
       if kind == "result" then
-        apply.apply(buf, target, outcome.text)
-      elseif kind == "error" or kind == "crash" or kind == "timeout" then
+        local discarded = apply.apply(tracked, outcome.text)
+        if discarded then
+          M.failed_instruction = instruction
+          vim.notify(discarded, vim.log.levels.WARN, { title = "nvimpi" })
+        end
+        return
+      end
+      apply.release(tracked)
+      if kind == "error" or kind == "crash" or kind == "timeout" then
         M.failed_instruction = instruction
         fail(outcome.message)
       elseif kind ~= "cancel" then -- a cancel is silent and does not refill
