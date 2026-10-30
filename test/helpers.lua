@@ -105,11 +105,7 @@ function H.sent_request()
   if vim.fn.getfsize(H.request_file) <= 0 then
     return nil
   end
-  local line = table.concat(vim.fn.readfile(H.request_file), "\n")
-  if line == "" then
-    return nil -- the fake created the file but has not written it yet
-  end
-  return vim.json.decode(line)
+  return vim.json.decode(table.concat(vim.fn.readfile(H.request_file), "\n"))
 end
 
 --- How many times the fake `node` ran.
