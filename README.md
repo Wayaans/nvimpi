@@ -8,6 +8,7 @@ Status: early development.
 
 - Neovim 0.12+
 - Node.js 22.19+ on `PATH`
+- An API key for your model's provider (see [Credentials](#credentials-bring-your-own-key)). pi itself is not required.
 
 There is no `npm install` and there are no Lua dependencies: the sidecar is committed as one bundled file.
 
@@ -39,49 +40,83 @@ The choice is saved to `stdpath("data")/nvimpi.json` as `{"model":"provider/id"}
 
 `model` in `setup()` always wins. While it is set, `:NvimpiModel` refuses with `model is set in setup(): remove it there to use :NvimpiModel`.
 
-### Credentials
+### Credentials (bring your own key)
 
-nvimpi looks for a key in this order, and the first source with an entry for the provider wins: `api_keys` in `setup()`, then pi's `auth.json`, then the provider's environment variable.
+nvimpi works without pi. Give it an API key in three steps. The examples use Anthropic; for another provider, swap in its provider id from the table.
 
-#### `api_keys` in setup()
+#### 1. Create an API key
 
-Without pi, or to pick a key explicitly, set `api_keys`: a table from provider id to a key, or to a function that returns one. The recommended setup on macOS keeps the key in the Keychain and reads it when a request starts:
+Sign in to your provider's console and create a key:
+
+| Provider | Provider id | Where to create a key | Environment variable |
+| --- | --- | --- | --- |
+| Anthropic | `anthropic` | https://platform.claude.com/settings/keys | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | https://platform.openai.com/api-keys | `OPENAI_API_KEY` |
+| Google Gemini | `google` | https://aistudio.google.com/apikey | `GEMINI_API_KEY` |
+| OpenRouter | `openrouter` | https://openrouter.ai/settings/keys | `OPENROUTER_API_KEY` |
+
+The provider id is the part of `model` before the first `/`, and it is also the key you use in `api_keys`.
+
+#### 2. Store the key in the macOS Keychain
+
+Open the **Terminal** app and run:
+
+```sh
+security add-generic-password -a "$USER" -s nvimpi-anthropic -w
+```
+
+When it asks for a password, paste the API key (nothing is shown while you paste) and press Return. It asks twice. This creates a Keychain item named `nvimpi-anthropic`; the `-s` value is the name you read it by in step 3.
+
+Check that it worked: `security find-generic-password -s nvimpi-anthropic -w` prints the key. To replace the key later, run the `add` command again with `-U` added.
+
+Create the item in Terminal like this, not in the Keychain Access app: an item made in Keychain Access makes macOS ask for permission each time Neovim reads it.
+
+#### 3. Tell nvimpi where the key is
+
+Add `api_keys` to your `setup()` call in your Neovim config (usually `~/.config/nvim/init.lua`):
 
 ```lua
--- Store it once: security add-generic-password -a "$USER" -s nvimpi-anthropic -w
+--- Returns a function that reads the Keychain item `name` when a request starts.
+local function keychain(name)
+  return function()
+    local result = vim.system({ "security", "find-generic-password", "-s", name, "-w" }, { text = true }):wait()
+    assert(result.code == 0, "no " .. name .. " item in the Keychain")
+    return result.stdout
+  end
+end
+
 require("nvimpi").setup({
   model = "anthropic/claude-sonnet-4-5",
   api_keys = {
-    anthropic = function()
-      local result = vim.system({ "security", "find-generic-password", "-s", "nvimpi-anthropic", "-w" }, { text = true }):wait()
-      assert(result.code == 0, "no nvimpi-anthropic item in the Keychain")
-      return result.stdout
-    end,
+    anthropic = keychain("nvimpi-anthropic"),
+    -- openai = keychain("nvimpi-openai"),
   },
 })
 ```
 
-A literal key works too:
+Restart Neovim and run `:checkhealth nvimpi`. It should report `anthropic credentials: api_keys.anthropic in setup()`.
 
-```lua
-require("nvimpi").setup({ model = "anthropic/claude-sonnet-4-5", api_keys = { anthropic = "sk-ant-..." } })
-```
+#### Other ways to give a key
 
-Do not commit a literal key: dotfiles often end up in a public repository. Prefer the Keychain function, or read the key from a file outside your dotfiles.
+- **A key file** (Linux, or anywhere without a Keychain). Save the key to a file outside your dotfiles, run `chmod 600` on it, and read it in the function: `anthropic = function() return vim.fn.readfile(vim.fn.expand("~/.local/share/nvimpi/anthropic-key"))[1] end`.
+- **An environment variable.** Leave `api_keys` out and set the provider's variable from the table (for example `export ANTHROPIC_API_KEY=...` in `~/.zshrc`). It must be set in the environment Neovim starts in.
+- **A literal key**: `api_keys = { anthropic = "sk-ant-..." }`. Do not commit it: dotfiles often end up in a public repository.
+
+#### How keys are used
+
+nvimpi looks for a key in this order, and the first source with an entry for the provider wins: `api_keys` in `setup()`, then pi's `auth.json`, then the provider's environment variable.
 
 - Only the current model's provider is looked up, and its function runs once per request. The result is trimmed.
 - If the function throws, or the key is empty or not a string, nvimpi reports `nvimpi: api_keys.<provider> failed: <reason>` and sends nothing.
 - The key reaches the sidecar on stdin only, never in its arguments or environment. A key the provider rejects is reported (with the key shown as `***`), and nvimpi does not fall back to another source.
 
-#### pi and environment variables
+#### Reusing pi logins (optional)
 
 If you use [pi](https://github.com/earendil-works/pi), nvimpi reuses its logins with no extra setup. It reads pi's `auth.json` (`$PI_CODING_AGENT_DIR/auth.json`, or `~/.pi/agent/auth.json`):
 
 - API keys work as in pi: a literal key, `$ENV` or `${ENV}`, or `!command` (run in `sh` with a 5 s timeout, once per request).
 - Subscription logins (`/login` in pi) work while their token is valid. nvimpi never refreshes a token or writes the file, so when a login expires, open pi once to refresh it.
-- An entry for the provider always wins. If it is broken (for example its command fails), nvimpi reports the error instead of trying anything else.
-
-Without a pi entry for the provider, credentials come from the provider's environment variable, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. The variable must be set in the environment Neovim runs in.
+- A pi entry for the provider wins over its environment variable (but not over `api_keys`). If the entry is broken (for example its command fails), nvimpi reports the error instead of trying the environment variable.
 
 ## Usage
 
